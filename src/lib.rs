@@ -1,6 +1,8 @@
 mod dmatrix;
+mod activation;
 
 use dmatrix::DMatrix;
+pub use activation::ActivationFn;
 use petgraph::graph::DefaultIx;
 use petgraph::graph::Graph;
 use petgraph::graph::NodeIndex;
@@ -10,7 +12,7 @@ use rand::Rng;
 
 #[derive(Debug)]
 pub enum PCError {
-    EdgeToSensor,
+    EdgeFromSensor,
     UndefinedNode(NodeId),
     NotSensor(NodeId),
     NotMemory(NodeId),
@@ -18,33 +20,38 @@ pub enum PCError {
 
 enum PCNode {
     Internal {
+        activation_fn: ActivationFn,
         values: Vec<f64>,
         predictions: Vec<f64>,
         errors: Vec<f64>,
     },
     Sensor {
+        activation_fn: ActivationFn,
         values: Vec<f64>,
         predictions: Vec<f64>,
         errors: Vec<f64>,
         mask: Vec<bool>,
     },
     Memory {
+        activation_fn: ActivationFn,
         values: Vec<f64>,
         errors: Vec<f64>,
     },
 }
 
 impl PCNode {
-    pub fn new_internal(size: usize) -> Self {
+    pub fn new_internal(size: usize, activation_fn: ActivationFn) -> Self {
         PCNode::Internal {
+            activation_fn,
             values: vec![0.; size],
             predictions: vec![0.; size],
             errors: vec![0.; size],
         }
     }
 
-    pub fn new_sensor(size: usize) -> Self {
+    pub fn new_sensor(size: usize, activation_fn: ActivationFn) -> Self {
         PCNode::Sensor {
+            activation_fn,
             values: vec![0.; size],
             predictions: vec![0.; size],
             errors: vec![0.; size],
@@ -52,8 +59,9 @@ impl PCNode {
         }
     }
 
-    pub fn new_memory(size: usize) -> Self {
+    pub fn new_memory(size: usize, activation_fn: ActivationFn) -> Self {
         PCNode::Memory {
+            activation_fn,
             values: vec![0.; size],
             errors: vec![0.; size],
         }
@@ -81,6 +89,7 @@ impl PCNode {
                 predictions,
                 errors,
                 values,
+                ..
             } => {
                 for i in 0..errors.len() {
                     errors[i] = values[i] - predictions[i];
@@ -100,6 +109,67 @@ impl PCNode {
         }
     }
 
+    pub fn activation(&self, output: &mut [f64]) {
+        match self {
+            PCNode::Internal { 
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.eval(values, output),
+            PCNode::Sensor {
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.eval(values, output),
+            PCNode::Memory {
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.eval(values, output),
+        }
+    }
+
+    pub fn activation_diff(&self, output: &mut [f64]) {
+        match self {
+            PCNode::Internal { 
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.diff(values, output),
+            PCNode::Sensor {
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.diff(values, output),
+            PCNode::Memory {
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.diff(values, output),
+        }
+    }
+
+    pub fn activation_diff_mul(&self, output: &mut [f64]) {
+        match self {
+            PCNode::Internal { 
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.diff_mul(values, output),
+            PCNode::Sensor {
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.diff_mul(values, output),
+            PCNode::Memory {
+                values,
+                activation_fn,
+                ..
+            } => activation_fn.diff_mul(values, output),
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
         match self {
             PCNode::Internal { values, .. } => {
@@ -131,6 +201,15 @@ impl PCEdge {
     pub fn new(from_size: usize, to_size: usize) -> Self {
         Self {
             weights: DMatrix::new(to_size, from_size, 0.),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
+        for r in 0..self.weights.rows() {
+            for c in 0..self.weights.cols() {
+                self.weights[(r, c)] += amount * rng.random_range(-1. .. 1.);
+            }
         }
     }
 }
@@ -167,6 +246,7 @@ impl PCN {
         Ok(w.size())
     }
 
+    /*
     pub fn activation(&self, input: &[f64], output: &mut [f64]) {
         for i in 0..input.len() {
             output[i] = input[i].tanh();
@@ -186,31 +266,32 @@ impl PCN {
             output[i] *= 1. - t * t;
         }
     }
+    */
 
-    pub fn add_internal_node(&mut self, node_size: usize) -> NodeId {
-        NodeId(self.0.add_node(PCNode::new_internal(node_size)))
+    pub fn add_internal_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
+        NodeId(self.0.add_node(PCNode::new_internal(node_size, activation_fn)))
     }
 
-    pub fn add_sensor_node(&mut self, node_size: usize) -> NodeId {
-        NodeId(self.0.add_node(PCNode::new_sensor(node_size)))
+    pub fn add_sensor_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
+        NodeId(self.0.add_node(PCNode::new_sensor(node_size, activation_fn)))
     }
 
-    pub fn add_memory_node(&mut self, node_size: usize) -> NodeId {
-        NodeId(self.0.add_node(PCNode::new_memory(node_size)))
+    pub fn add_memory_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
+        NodeId(self.0.add_node(PCNode::new_memory(node_size, activation_fn)))
     }
 
-    pub fn connect_nodes(&mut self, n1: &NodeId, n2: &NodeId) -> Result<(), PCError> {
-        if self.is_sensor(n2) {
-            Err(PCError::EdgeToSensor)
+    pub fn connect_nodes(&mut self, source: &NodeId, target: &NodeId) -> Result<(), PCError> {
+        if self.is_sensor(source) {
+            Err(PCError::EdgeFromSensor)
         } else {
-            match (self.0.node_weight(n1.0), self.0.node_weight(n2.0)) {
+            match (self.0.node_weight(source.0), self.0.node_weight(target.0)) {
                 (Some(n1w), Some(n2w)) => {
                     self.0
-                        .add_edge(n1.0, n2.0, PCEdge::new(n1w.size(), n2w.size()));
+                        .add_edge(source.0, target.0, PCEdge::new(n1w.size(), n2w.size()));
                     Ok(())
                 }
-                (None, _) => Err(PCError::UndefinedNode(*n1)),
-                (_, None) => Err(PCError::UndefinedNode(*n2)),
+                (None, _) => Err(PCError::UndefinedNode(*source)),
+                (_, None) => Err(PCError::UndefinedNode(*target)),
             }
         }
     }
@@ -223,7 +304,9 @@ impl PCN {
                 let n2 = edge.source();
                 let mut temp_vec = vec![0.; self.node_size(&NodeId(n2))?];
 
-                self.activation(self.get_node_values(&NodeId(n2))?, &mut temp_vec);
+                self.0.node_weight(n2)
+                    .ok_or(PCError::UndefinedNode(NodeId(n2)))?
+                    .activation(&mut temp_vec);
 
                 edge.weight()
                     .weights
@@ -264,10 +347,12 @@ impl PCN {
                 let n2 = edge.target();
                 edge.weight()
                     .weights
-                    .trans_mul_vec(self.get_node_errors(&NodeId(n2))?, &mut acc);
+                    .trans_mul_vec_add(self.get_node_errors(&NodeId(n2))?, &mut acc);
             }
 
-            self.mul_activation_diff(self.get_node_values(&NodeId(node_index))?, &mut acc);
+            self.0.node_weight(node_index)
+                .ok_or(PCError::UndefinedNode(NodeId(node_index)))?
+                .activation_diff_mul(&mut acc);
 
             let es = self.get_node_errors(&NodeId(node_index))?;
             for i in 0..acc.len() {
@@ -294,16 +379,18 @@ impl PCN {
     pub fn learning_step(&mut self, alpha: f64) -> Result<(), PCError> {
         for edge_index in self.0.edge_indices() {
             if let Some((source, target)) = self.0.edge_endpoints(edge_index) {
-                let errors = self.get_node_errors(&NodeId(source))?;
-                let values = self.get_node_values(&NodeId(target))?;
-                let mut temp_values = vec![0.; values.len()];
+                let errors = self.get_node_errors(&NodeId(target))?;
+                let values_size = self.node_size(&NodeId(source))?;
+                let mut temp_values = vec![0.; values_size];
                 let mut temp_errors = vec![0.; errors.len()];
 
-                self.activation(values, &mut temp_values);
+                self.0.node_weight(source)
+                    .ok_or(PCError::UndefinedNode(NodeId(source)))?
+                    .activation_diff(&mut temp_values);
                 temp_errors.copy_from_slice(&errors);
 
                 if let Some(w) = self.0.edge_weight_mut(edge_index) {
-                    w.weights.add_vecs_mul(alpha, &temp_values, &temp_errors);
+                    w.weights.add_vecs_mul(alpha, &temp_errors, &temp_values);
                 }
             }
         }
@@ -390,7 +477,7 @@ impl PCN {
         }
     }
 
-    pub fn set_memory_values(
+    pub fn set_layer_values(
         &mut self,
         node_id: &NodeId,
         new_values: &[f64],
@@ -403,10 +490,17 @@ impl PCN {
 
         match w {
             PCNode::Memory { values, .. } => Ok(values.copy_from_slice(new_values)),
-            _ => Err(PCError::NotMemory(*node_id)),
+            PCNode::Internal { values, .. } => Ok(values.copy_from_slice(new_values)),
+            PCNode::Sensor { values, mask, .. } => {
+                values.copy_from_slice(new_values);
+                let l = mask.len();
+                mask.copy_from_slice(&vec![false; l]);
+                Ok(())
+            }
         }
     }
 
+    #[allow(dead_code)]
     pub fn randomize_node(
         &mut self,
         node_id: &NodeId,

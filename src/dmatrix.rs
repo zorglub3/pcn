@@ -61,6 +61,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn mul_row_col(&self, m: &DMatrix<T>, r: usize, c: usize) -> T {
         debug_assert_eq!(self.cols, m.rows);
 
@@ -109,6 +110,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         acc
     }
 
+    #[allow(dead_code)]
     pub fn mul_assign(&mut self, m1: &DMatrix<T>, m2: &DMatrix<T>) {
         debug_assert_eq!(self.rows, m1.rows);
         debug_assert_eq!(self.cols, m2.cols);
@@ -121,6 +123,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn mul_vec(&self, input: &[T], output: &mut [T]) {
         debug_assert_eq!(self.cols, input.len());
         debug_assert_eq!(self.rows, output.len());
@@ -139,17 +142,18 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         }
     }
 
-    pub fn trans_mul_vec(&self, input: &[T], output: &mut [T]) {
+    pub fn trans_mul_vec_add(&self, input: &[T], output: &mut [T]) {
         debug_assert_eq!(self.rows, input.len());
         debug_assert_eq!(self.cols, output.len());
 
         for i in 0..output.len() {
-            output[i] = self.mul_col_vec(input, i);
+            output[i] += self.mul_col_vec(input, i);
         }
     }
 }
 
 impl<T: AddAssign + Copy> DMatrix<T> {
+    #[allow(dead_code)]
     pub fn add_matrix(&mut self, mat: &DMatrix<T>) {
         debug_assert_eq!(self.rows, mat.rows);
         debug_assert_eq!(self.cols, mat.cols);
@@ -161,6 +165,7 @@ impl<T: AddAssign + Copy> DMatrix<T> {
 }
 
 impl<T: Clone> DMatrix<T> {
+    #[allow(dead_code)]
     pub fn assign(&mut self, m: &DMatrix<T>) {
         debug_assert_eq!(self.rows, m.rows);
         debug_assert_eq!(self.cols, m.cols);
@@ -170,6 +175,7 @@ impl<T: Clone> DMatrix<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add_row(&mut self, row: &[T]) {
         debug_assert_eq!(self.cols, row.len());
 
