@@ -1,5 +1,5 @@
-use pcn::PCN;
 use pcn::ActivationFn;
+use pcn::PCN;
 
 const SENSOR_SIZE: usize = 8;
 const INTERNAL_SIZE: usize = 4;
@@ -13,11 +13,7 @@ fn generate_sensor_pattern(pattern_number: usize, pattern_values: &mut [f64]) {
     match pattern_number {
         0 => {
             for i in 0..pattern_values.len() {
-                pattern_values[i] = if i % 2 == 0 || i % 5 == 0 {
-                    1.
-                } else {
-                    -1.
-                }
+                pattern_values[i] = if i % 2 == 0 || i % 5 == 0 { 1. } else { -1. }
             }
         }
         _ => panic!("No pattern for {}", pattern_number),
@@ -79,7 +75,7 @@ fn main() {
 
     generate_sensor_pattern(0, &mut partial_pattern);
 
-    for i in (SENSOR_SIZE/2)..SENSOR_SIZE {
+    for i in (SENSOR_SIZE / 2)..SENSOR_SIZE {
         partial_pattern[i] = 0.;
         partial_mask[i] = false;
     }

@@ -1,4 +1,3 @@
-
 pub enum ActivationFn {
     Tanh,
     ReLu,
@@ -96,6 +95,3 @@ impl ActivationFn {
         }
     }
 }
-
-
-

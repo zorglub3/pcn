@@ -1,8 +1,8 @@
-mod dmatrix;
 mod activation;
+mod dmatrix;
 
-use dmatrix::DMatrix;
 pub use activation::ActivationFn;
+use dmatrix::DMatrix;
 use petgraph::graph::DefaultIx;
 use petgraph::graph::Graph;
 use petgraph::graph::NodeIndex;
@@ -75,6 +75,24 @@ impl PCNode {
         }
     }
 
+    pub fn energy(&self) -> f64 {
+        let mut acc = 0.;
+
+        use PCNode::*;
+
+        let errors = match self {
+            Internal { errors, .. } => errors,
+            Sensor { errors, .. } => errors,
+            Memory { errors, .. } => errors,
+        };
+
+        for e in errors {
+            acc += e * e;
+        }
+
+        0.5 * acc
+    }
+
     pub fn set_predictions(&mut self, p: &[f64]) {
         match self {
             PCNode::Internal { predictions, .. } => predictions.copy_from_slice(p),
@@ -111,7 +129,7 @@ impl PCNode {
 
     pub fn activation(&self, output: &mut [f64]) {
         match self {
-            PCNode::Internal { 
+            PCNode::Internal {
                 values,
                 activation_fn,
                 ..
@@ -131,7 +149,7 @@ impl PCNode {
 
     pub fn activation_diff(&self, output: &mut [f64]) {
         match self {
-            PCNode::Internal { 
+            PCNode::Internal {
                 values,
                 activation_fn,
                 ..
@@ -151,7 +169,7 @@ impl PCNode {
 
     pub fn activation_diff_mul(&self, output: &mut [f64]) {
         match self {
-            PCNode::Internal { 
+            PCNode::Internal {
                 values,
                 activation_fn,
                 ..
@@ -208,7 +226,7 @@ impl PCEdge {
     pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
         for r in 0..self.weights.rows() {
             for c in 0..self.weights.cols() {
-                self.weights[(r, c)] += amount * rng.random_range(-1. .. 1.);
+                self.weights[(r, c)] += amount * rng.random_range(-1. ..1.);
             }
         }
     }
@@ -246,38 +264,25 @@ impl PCN {
         Ok(w.size())
     }
 
-    /*
-    pub fn activation(&self, input: &[f64], output: &mut [f64]) {
-        for i in 0..input.len() {
-            output[i] = input[i].tanh();
-        }
-    }
-
-    pub fn activation_diff(&self, input: &[f64], output: &mut [f64]) {
-        for i in 0..input.len() {
-            let t = input[i].tanh();
-            output[i] = 1. - t * t;
-        }
-    }
-
-    pub fn mul_activation_diff(&self, input: &[f64], output: &mut [f64]) {
-        for i in 0..input.len() {
-            let t = input[i].tanh();
-            output[i] *= 1. - t * t;
-        }
-    }
-    */
-
     pub fn add_internal_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
-        NodeId(self.0.add_node(PCNode::new_internal(node_size, activation_fn)))
+        NodeId(
+            self.0
+                .add_node(PCNode::new_internal(node_size, activation_fn)),
+        )
     }
 
     pub fn add_sensor_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
-        NodeId(self.0.add_node(PCNode::new_sensor(node_size, activation_fn)))
+        NodeId(
+            self.0
+                .add_node(PCNode::new_sensor(node_size, activation_fn)),
+        )
     }
 
     pub fn add_memory_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
-        NodeId(self.0.add_node(PCNode::new_memory(node_size, activation_fn)))
+        NodeId(
+            self.0
+                .add_node(PCNode::new_memory(node_size, activation_fn)),
+        )
     }
 
     pub fn connect_nodes(&mut self, source: &NodeId, target: &NodeId) -> Result<(), PCError> {
@@ -304,7 +309,8 @@ impl PCN {
                 let n2 = edge.source();
                 let mut temp_vec = vec![0.; self.node_size(&NodeId(n2))?];
 
-                self.0.node_weight(n2)
+                self.0
+                    .node_weight(n2)
                     .ok_or(PCError::UndefinedNode(NodeId(n2)))?
                     .activation(&mut temp_vec);
 
@@ -350,7 +356,8 @@ impl PCN {
                     .trans_mul_vec_add(self.get_node_errors(&NodeId(n2))?, &mut acc);
             }
 
-            self.0.node_weight(node_index)
+            self.0
+                .node_weight(node_index)
                 .ok_or(PCError::UndefinedNode(NodeId(node_index)))?
                 .activation_diff_mul(&mut acc);
 
@@ -384,7 +391,8 @@ impl PCN {
                 let mut temp_values = vec![0.; values_size];
                 let mut temp_errors = vec![0.; errors.len()];
 
-                self.0.node_weight(source)
+                self.0
+                    .node_weight(source)
                     .ok_or(PCError::UndefinedNode(NodeId(source)))?
                     .activation_diff(&mut temp_values);
                 temp_errors.copy_from_slice(&errors);
@@ -396,7 +404,8 @@ impl PCN {
         }
 
         for node_index in self.0.node_indices() {
-            if let Some(PCNode::Memory { values, errors, .. }) = self.0.node_weight_mut(node_index) {
+            if let Some(PCNode::Memory { values, errors, .. }) = self.0.node_weight_mut(node_index)
+            {
                 for i in 0..values.len() {
                     values[i] -= alpha * errors[i];
                 }
@@ -444,6 +453,13 @@ impl PCN {
             Some(PCNode::Sensor { errors, .. }) => Ok(errors),
             Some(PCNode::Internal { errors, .. }) => Ok(errors),
             Some(PCNode::Memory { errors, .. }) => Ok(errors),
+            None => Err(PCError::UndefinedNode(*node_id)),
+        }
+    }
+
+    pub fn get_node_energy(&self, node_id: &NodeId) -> Result<f64, PCError> {
+        match self.0.node_weight(node_id.0) {
+            Some(node) => Ok(node.energy()),
             None => Err(PCError::UndefinedNode(*node_id)),
         }
     }
