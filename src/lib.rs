@@ -1,5 +1,7 @@
 mod activation;
 mod dmatrix;
+#[cfg(feature = "tf")]
+mod tf;
 
 pub use activation::ActivationFn;
 use dmatrix::DMatrix;
@@ -18,7 +20,7 @@ pub enum PCError {
     NotMemory(NodeId),
 }
 
-enum PCNode {
+pub(crate) enum PCNode {
     Internal {
         activation_fn: ActivationFn,
         values: Vec<f64>,
