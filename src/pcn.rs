@@ -1,13 +1,5 @@
-mod activation;
-mod dmatrix;
-mod pcn;
-mod spec;
-#[cfg(feature = "tf")]
-mod tf;
-
-/*
-pub use activation::ActivationFn;
-use dmatrix::DMatrix;
+use crate::activation::ActivationFn;
+use crate::dmatrix::DMatrix;
 use petgraph::graph::DefaultIx;
 use petgraph::graph::Graph;
 use petgraph::graph::NodeIndex;
@@ -537,4 +529,3 @@ impl PCN {
         Ok(())
     }
 }
-*/

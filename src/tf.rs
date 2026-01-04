@@ -1,13 +1,13 @@
 use tensorflow::ops;
-use tensorflow::Scope;
-use tensorflow::Variable;
-use tensorflow::Operation;
-use tensorflow::Status;
 use tensorflow::DataType;
+use tensorflow::Operation;
+use tensorflow::Scope;
+use tensorflow::Status;
+use tensorflow::Variable;
 // use tensorflow::Shape;
-use tensorflow::Output;
-use crate::PCNode;
 use crate::ActivationFn;
+use crate::PCNode;
+use tensorflow::Output;
 
 pub enum TFError {
     TFStatus(Status),
@@ -26,10 +26,7 @@ pub struct NodeVariables {
     pub values: Variable,
 }
 
-fn make_node_variables(
-    node_size: u32,
-    scope: &mut Scope,
-) -> Result<NodeVariables, TFError> {
+fn make_node_variables(node_size: u32, scope: &mut Scope) -> Result<NodeVariables, TFError> {
     let predictions = Variable::builder()
         .data_type(DataType::Float)
         .shape([node_size])
@@ -86,7 +83,7 @@ fn activation_diff_op<O: Into<Output>>(
 }
 
 fn node_compute_predictions(
-    node: usize, 
+    node: usize,
     node_activation: &[ActivationFn],
     node_variables: &[NodeVariables],
     edge_variables: &[EdgeVariables],
@@ -105,7 +102,8 @@ fn node_compute_predictions(
                     scope,
                 )?,
                 scope,
-            )?.into()
+            )?
+            .into(),
         );
     }
 
@@ -115,7 +113,8 @@ fn node_compute_predictions(
         node_variables[node].predictions.output().clone(),
         sum,
         scope,
-    ).map_err(TFError::from)
+    )
+    .map_err(TFError::from)
 }
 
 fn node_compute_errors(
@@ -127,10 +126,11 @@ fn node_compute_errors(
         ops::sub(
             node_variables.values.output().clone(),
             node_variables.predictions.output().clone(),
-            scope
+            scope,
         )?,
         scope,
-    ).map_err(TFError::from)
+    )
+    .map_err(TFError::from)
 }
 
 fn node_compute_values(
@@ -150,7 +150,8 @@ fn node_compute_values(
                 node_variables[s.1].errors.output().clone(),
                 edge_variables[s.0].weights.output().clone(),
                 scope,
-            )?.into()
+            )?
+            .into(),
         );
     }
 
@@ -161,16 +162,13 @@ fn node_compute_values(
         ops::mul(
             ops::constant(gamma, scope)?,
             ops::sub(
-                activation_diff_op(
-                    &node_activation[node],
-                    sum,
-                    scope,
-                )?,
+                activation_diff_op(&node_activation[node], sum, scope)?,
                 node_variables[node].errors.output().clone(),
                 scope,
             )?,
             scope,
         )?,
         scope,
-    ).map_err(TFError::from)
+    )
+    .map_err(TFError::from)
 }
