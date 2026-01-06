@@ -13,3 +13,7 @@ Things to do on the project:
   2. Instead of boolean masks for sensors allow for variable certainty/mutability
      during inference.
   3. Let certainty/mutability of sensors be decided by the network itself
+- Basic features
+  1. Saving/loading specs
+  2. PCN to spec
+  3. Convolution networks -> let several edges share the same weight matrix
