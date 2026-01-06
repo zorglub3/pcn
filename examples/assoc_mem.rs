@@ -1,5 +1,5 @@
 use pcn::ActivationFn;
-use pcn::PCN;
+use pcn::Spec;
 
 const SENSOR_SIZE: usize = 8;
 const INTERNAL_SIZE: usize = 4;
@@ -21,19 +21,17 @@ fn generate_sensor_pattern(pattern_number: usize, pattern_values: &mut [f64]) {
 }
 
 fn main() {
+    println!("Creating spec for PCN");
+    let mut spec = Spec::new();
+    let sensor = spec.add_sensor_node(SENSOR_SIZE, ActivationFn::Tanh);
+    let hidden = spec.add_internal_node(INTERNAL_SIZE, ActivationFn::Tanh);
+    let memory = spec.add_output_node(MEMORY_SIZE, ActivationFn::Tanh);
+
+    spec.add_edge(hidden, sensor);
+    spec.add_edge(memory, hidden);
+
     println!("Creating associative memory");
-    let mut assoc_mem = PCN::new();
-
-    let sensor = assoc_mem.add_sensor_node(SENSOR_SIZE, ActivationFn::Tanh);
-    let hidden = assoc_mem.add_internal_node(INTERNAL_SIZE, ActivationFn::Tanh);
-    let memory = assoc_mem.add_memory_node(MEMORY_SIZE, ActivationFn::Tanh);
-
-    assoc_mem
-        .connect_nodes(&hidden, &sensor)
-        .expect("Could not connect nodes");
-    assoc_mem
-        .connect_nodes(&memory, &hidden)
-        .expect("Could not connect nodes");
+    let mut assoc_mem = spec.build_model();
 
     println!("Learning a pattern");
     let mut pattern: Vec<f64> = vec![0.; SENSOR_SIZE];
@@ -42,32 +40,18 @@ fn main() {
 
     generate_sensor_pattern(0, &mut pattern);
 
-    assoc_mem
-        .set_sensor_values(&sensor, &pattern, &learning_mask)
-        .expect("Could not set sensor layer for learning");
-    assoc_mem
-        .set_layer_values(&memory, &mem_pattern)
-        .expect("Could not set memory layer");
+    assoc_mem.set_sensor_values(sensor, &pattern, &learning_mask);
+    assoc_mem.set_layer_values(memory, &mem_pattern);
 
     for _i in 0..IL_STEPS {
-        assoc_mem
-            .inference_steps(GAMMA, INFERENCE_STEPS)
-            .expect("Could not perform inference step");
-        assoc_mem
-            .learning_step(ALPHA)
-            .expect("Could not perform learning step");
+        assoc_mem.inference_steps(GAMMA, INFERENCE_STEPS);
+        assoc_mem.learning_step(ALPHA);
     }
 
     println!("Resetting network");
-    assoc_mem
-        .set_layer_values(&hidden, &vec![0.; INTERNAL_SIZE])
-        .expect("Could not zero the internal node");
-    assoc_mem
-        .set_layer_values(&memory, &mem_pattern)
-        .expect("Could not set memory node");
-    assoc_mem
-        .set_layer_values(&sensor, &vec![0.; SENSOR_SIZE])
-        .expect("Could not zero the sensor layer");
+    assoc_mem.set_layer_values(hidden, &vec![0.; INTERNAL_SIZE]);
+    assoc_mem.set_layer_values(memory, &mem_pattern);
+    assoc_mem.set_layer_values(sensor, &vec![0.; SENSOR_SIZE]);
 
     println!("Use network for recall");
     let mut partial_pattern = vec![0.; SENSOR_SIZE];
@@ -80,15 +64,11 @@ fn main() {
         partial_mask[i] = false;
     }
 
-    assoc_mem
-        .set_sensor_values(&sensor, &partial_pattern, &partial_mask)
-        .expect("Could not set partial sensor pattern");
-    assoc_mem
-        .inference_steps(GAMMA, INFERENCE_STEPS)
-        .expect("Could not recall pattern");
+    assoc_mem.set_sensor_values(sensor, &partial_pattern, &partial_mask);
+    assoc_mem.inference_steps(GAMMA, INFERENCE_STEPS);
 
     let node_values = assoc_mem
-        .get_node_values(&sensor)
+        .get_node_values(sensor)
         .expect("Could not get sensor node values");
 
     println!("Original pattern: {:?}", &pattern);

@@ -45,33 +45,46 @@ impl Spec {
         }
     }
 
-    pub fn add_sensor_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
+    fn add_node(&mut self, node: Node) -> NodeId {
         let index = self.nodes.len();
 
-        let node_data = Node {
-            function,
-            mode: NodeMode::Sensor,
-            size,
-        };
-
-        self.nodes.push(node_data);
+        self.nodes.push(node);
 
         NodeId::new(index)
     }
 
+    pub fn add_sensor_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
+        self.add_node(Node {
+            function,
+            mode: NodeMode::Sensor,
+            size,
+        })
+    }
+
+    pub fn add_output_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
+        self.add_node(Node {
+            function,
+            mode: NodeMode::Output,
+            size,
+        })
+    }
+
+    pub fn add_internal_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
+        self.add_node(Node {
+            function,
+            mode: NodeMode::Hidden,
+            size,
+        })
+    }
+
     pub fn add_edge(&mut self, from: NodeId, to: NodeId) {
-        if self.nodes.len() <= from.0 {
-            panic!("add_edge: invalid from node id")
-        };
+        assert!(from.0 < self.nodes.len());
+        assert!(to.0 < self.nodes.len());
 
-        let to_node = if self.nodes.len() > to.0 {
-            &self.nodes[to.0]
-        } else {
-            panic!("add_edge: invalid to node id")
-        };
+        let from_node = &self.nodes[from.0];
 
-        if to_node.mode == NodeMode::Sensor {
-            panic!("add_edge: target node cannot be a sensor");
+        if from_node.mode == NodeMode::Sensor {
+            panic!("add_edge: source node cannot be a sensor");
         }
 
         let edge_data = Edge { from, to };

@@ -31,6 +31,22 @@ pub(crate) enum PCNode {
 }
 
 impl PCNode {
+    fn activation_fn(&self) -> &ActivationFn {
+        match self {
+            PCNode::Internal { activation_fn, .. } => activation_fn,
+            PCNode::Sensor { activation_fn, .. } => activation_fn,
+            PCNode::Memory { activation_fn, .. } => activation_fn,
+        }
+    }
+
+    fn values(&self) -> &[f64] {
+        match self {
+            PCNode::Internal { values, .. } => values,
+            PCNode::Sensor { values, .. } => values,
+            PCNode::Memory { values, .. } => values,
+        }
+    }
+
     pub fn new_internal(size: usize, activation_fn: ActivationFn) -> Self {
         PCNode::Internal {
             activation_fn,
@@ -119,67 +135,16 @@ impl PCNode {
         }
     }
 
-    // TODO - refactor: can be made concise as all nodes have activation functions
     pub fn activation(&self, output: &mut [f64]) {
-        match self {
-            PCNode::Internal {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.eval(values, output),
-            PCNode::Sensor {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.eval(values, output),
-            PCNode::Memory {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.eval(values, output),
-        }
+        self.activation_fn().eval(self.values(), output)
     }
 
-    // TODO - refactor: can be made concise as all nodes have activation functions
     pub fn activation_diff(&self, output: &mut [f64]) {
-        match self {
-            PCNode::Internal {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.diff(values, output),
-            PCNode::Sensor {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.diff(values, output),
-            PCNode::Memory {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.diff(values, output),
-        }
+        self.activation_fn().diff(self.values(), output)
     }
 
-    // TODO - refactor: can be made concise as all nodes have activation functions
     pub fn activation_diff_mul(&self, output: &mut [f64]) {
-        match self {
-            PCNode::Internal {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.diff_mul(values, output),
-            PCNode::Sensor {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.diff_mul(values, output),
-            PCNode::Memory {
-                values,
-                activation_fn,
-                ..
-            } => activation_fn.diff_mul(values, output),
-        }
+        self.activation_fn().diff_mul(self.values(), output)
     }
 
     #[allow(dead_code)]
@@ -231,11 +196,6 @@ type NodeIdx = NodeIndex<DefaultIx>;
 
 pub struct PCN(Graph<PCNode, PCEdge>, HashMap<NodeId, NodeIdx>);
 
-/*
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
-pub struct NodeId(NodeIndex<DefaultIx>);
-*/
-
 impl PCN {
     pub(crate) fn new(
         graph: Graph<PCNode, PCEdge>,
@@ -244,87 +204,9 @@ impl PCN {
         Self(graph, nodes_map)
     }
 
-    /*
-    pub fn new() -> Self {
-        Self(Graph::<PCNode, PCEdge>::new())
-    }
-    */
-
-    /*
-    pub fn is_sensor(&self, node_id: &NodeId) -> bool {
-        match self.0.node_weight(node_id.0) {
-            Some(PCNode::Sensor { .. }) => true,
-            _ => false,
-        }
-    }
-    */
-
-    /*
-    pub fn is_internal(&self, node_id: &NodeId) -> bool {
-        match self.0.node_weight(node_id.0) {
-            Some(PCNode::Internal { .. }) => true,
-            _ => false,
-        }
-    }
-    */
-
     fn node_size(&self, node_index: &NodeIdx) -> usize {
         self.0.node_weight(*node_index).unwrap().size()
     }
-    /*
-    pub fn node_size(&self, node_id: &NodeId) -> Result<usize, PCError> {
-        let Some(w) = self.0.node_weight(node_id.0) else {
-            return Err(PCError::UndefinedNode(*node_id));
-        };
-
-        Ok(w.size())
-    }
-    */
-
-    /*
-    pub fn add_internal_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
-        NodeId(
-            self.0
-                .add_node(PCNode::new_internal(node_size, activation_fn)),
-        )
-    }
-    */
-
-    /*
-    pub fn add_sensor_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
-        NodeId(
-            self.0
-                .add_node(PCNode::new_sensor(node_size, activation_fn)),
-        )
-    }
-    */
-
-    /*
-    pub fn add_memory_node(&mut self, node_size: usize, activation_fn: ActivationFn) -> NodeId {
-        NodeId(
-            self.0
-                .add_node(PCNode::new_memory(node_size, activation_fn)),
-        )
-    }
-    */
-
-    /*
-    pub fn connect_nodes(&mut self, source: &NodeId, target: &NodeId) -> Result<(), PCError> {
-        if self.is_sensor(source) {
-            Err(PCError::EdgeFromSensor)
-        } else {
-            match (self.0.node_weight(source.0), self.0.node_weight(target.0)) {
-                (Some(n1w), Some(n2w)) => {
-                    self.0
-                        .add_edge(source.0, target.0, PCEdge::new(n1w.size(), n2w.size()));
-                    Ok(())
-                }
-                (None, _) => Err(PCError::UndefinedNode(*source)),
-                (_, None) => Err(PCError::UndefinedNode(*target)),
-            }
-        }
-    }
-    */
 
     pub fn compute_predictions(&mut self) {
         for node_index in self.0.node_indices() {
@@ -423,15 +305,14 @@ impl PCN {
         }
     }
 
-    /*
-    fn get_node_values(&self, index: &NodeIdx) -> &[f64] {
+    pub fn get_node_values(&self, id: NodeId) -> Option<&[f64]> {
+        let index = self.1.get(&id)?;
         match self.0.node_weight(*index).unwrap() {
-            PCNode::Sensor { values, .. } => values,
-            PCNode::Internal { values, .. } => values,
-            PCNode::Memory { values, .. } => values,
+            PCNode::Sensor { values, .. } => Some(values),
+            PCNode::Internal { values, .. } => Some(values),
+            PCNode::Memory { values, .. } => Some(values),
         }
     }
-    */
 
     fn update_node_values(&mut self, index: &NodeIdx, delta: &[f64]) {
         match self.0.node_weight_mut(*index).unwrap() {
@@ -466,8 +347,8 @@ impl PCN {
         self.0.node_weight(*index).unwrap().energy()
     }
 
-    pub fn set_sensor_values(&mut self, node_id: &NodeId, new_values: &[f64], new_mask: &[bool]) {
-        let index = self.1.get(node_id).unwrap();
+    pub fn set_sensor_values(&mut self, node_id: NodeId, new_values: &[f64], new_mask: &[bool]) {
+        let index = self.1.get(&node_id).unwrap();
         let Some(w) = self.0.node_weight_mut(*index) else {
             panic!("Undefined node: {:?}", node_id);
         };
@@ -489,8 +370,8 @@ impl PCN {
         }
     }
 
-    pub fn set_layer_values(&mut self, node_id: &NodeId, new_values: &[f64]) {
-        let index = self.1.get(node_id).unwrap();
+    pub fn set_layer_values(&mut self, node_id: NodeId, new_values: &[f64]) {
+        let index = self.1.get(&node_id).unwrap();
         let Some(w) = self.0.node_weight_mut(*index) else {
             panic!("Undefined node: {:?}", node_id);
         };
@@ -509,8 +390,8 @@ impl PCN {
     }
 
     #[allow(dead_code)]
-    pub fn randomize_node(&mut self, node_id: &NodeId, amount: f64, rng: &mut impl Rng) {
-        let index = self.1.get(node_id).unwrap();
+    pub fn randomize_node(&mut self, node_id: NodeId, amount: f64, rng: &mut impl Rng) {
+        let index = self.1.get(&node_id).unwrap();
         let Some(w) = self.0.node_weight_mut(*index) else {
             panic!("Undefined node: {:?}", node_id);
         };

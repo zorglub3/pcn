@@ -6,6 +6,7 @@ mod spec;
 mod tf;
 
 pub use spec::*;
+pub use activation::ActivationFn;
 /*
 pub use activation::ActivationFn;
 use dmatrix::DMatrix;
