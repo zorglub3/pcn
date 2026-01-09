@@ -1,6 +1,8 @@
 use std::fmt::Debug;
 use std::ops::{AddAssign, Index, IndexMut, Mul};
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize)]
 pub struct DMatrix<T> {
     rows: usize,
     cols: usize,

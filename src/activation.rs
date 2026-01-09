@@ -1,4 +1,6 @@
-#[derive(PartialEq, Clone, Copy)]
+use serde::{Serialize, Deserialize};
+
+#[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum ActivationFn {
     Tanh,
     ReLu,
