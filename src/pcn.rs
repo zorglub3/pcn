@@ -27,6 +27,7 @@ pub(crate) enum PCNode {
         activation_fn: ActivationFn,
         values: Vec<f64>,
         errors: Vec<f64>,
+        predictions: Vec<f64>,
     },
 }
 
@@ -44,6 +45,14 @@ impl PCNode {
             PCNode::Internal { values, .. } => values,
             PCNode::Sensor { values, .. } => values,
             PCNode::Memory { values, .. } => values,
+        }
+    }
+
+    fn errors(&self) -> &[f64] {
+        match self {
+            PCNode::Internal { errors, .. } => errors,
+            PCNode::Sensor { errors, .. } => errors,
+            PCNode::Memory { errors, .. } => errors,
         }
     }
 
@@ -71,6 +80,7 @@ impl PCNode {
             activation_fn,
             values: vec![0.; size],
             errors: vec![0.; size],
+            predictions: vec![0.; size],
         }
     }
 
@@ -105,7 +115,7 @@ impl PCNode {
         match self {
             PCNode::Internal { predictions, .. } => predictions.copy_from_slice(p),
             PCNode::Sensor { predictions, .. } => predictions.copy_from_slice(p),
-            _ => {}
+            PCNode::Memory { predictions, .. } => predictions.copy_from_slice(p),
         }
     }
 
@@ -131,7 +141,16 @@ impl PCNode {
                     errors[i] = values[i] - predictions[i];
                 }
             }
-            _ => {}
+            PCNode::Memory {
+                predictions,
+                errors,
+                values,
+                ..
+            } => {
+                for i in 0..errors.len() {
+                    errors[i] = values[i] - predictions[i];
+                }
+            }
         }
     }
 
@@ -139,6 +158,12 @@ impl PCNode {
         self.activation_fn().eval(self.values(), output)
     }
 
+    #[allow(dead_code)]
+    pub fn activation_mul(&self, output: &mut [f64]) {
+        self.activation_fn().eval_mul(self.values(), output)
+    }
+
+    #[allow(dead_code)]
     pub fn activation_diff(&self, output: &mut [f64]) {
         self.activation_fn().diff(self.values(), output)
     }
@@ -148,7 +173,7 @@ impl PCNode {
     }
 
     #[allow(dead_code)]
-    pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
+    pub fn add_noise(&mut self, amount: f64, rng: &mut impl Rng) {
         match self {
             PCNode::Internal { values, .. } => {
                 for i in 0..values.len() {
@@ -169,61 +194,123 @@ impl PCNode {
             }
         }
     }
+
+    pub fn set_to_random(&mut self, amount: f64, rng: &mut impl Rng) {
+        match self {
+            PCNode::Internal { values, .. } => {
+                for i in 0..values.len() {
+                    values[i] = amount * rng.random_range(-1. ..1.);
+                }
+            }
+            PCNode::Sensor { values, mask, .. } => {
+                for i in 0..values.len() {
+                    if !mask[i] {
+                        values[i] = amount * rng.random_range(-1. ..1.);
+                    }
+                }
+            }
+            PCNode::Memory { values, .. } => {
+                for i in 0..values.len() {
+                    values[i] = amount * rng.random_range(-1. ..1.);
+                }
+            }
+        }
+    }
 }
 
+#[derive(Clone)]
 pub(crate) struct PCEdge {
-    weights: DMatrix<f64>,
+    weight_matrix_index: usize,
+    // weights: DMatrix<f64>,
 }
 
 impl PCEdge {
+    pub fn new(weight_matrix_index: usize) -> Self {
+        Self {
+            weight_matrix_index,
+        }
+    }
+
+    /*
     pub fn new(from_size: usize, to_size: usize) -> Self {
         Self {
             weights: DMatrix::new(to_size, from_size, 0.),
         }
     }
+    */
 
+    /*
     #[allow(dead_code)]
     pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
         for r in 0..self.weights.rows() {
             for c in 0..self.weights.cols() {
-                self.weights[(r, c)] += amount * rng.random_range(-1. ..1.);
+                self.weights[(r, c)] += amount * rng.random_range(-1. .. 1.);
             }
         }
     }
+    */
 }
 
 type NodeIdx = NodeIndex<DefaultIx>;
 
-pub struct PCN(Graph<PCNode, PCEdge>, HashMap<NodeId, NodeIdx>);
+// pub struct PCN(Graph<PCNode, PCEdge>, HashMap<NodeId, NodeIdx>);
+pub struct PCN {
+    graph: Graph<PCNode, PCEdge>,
+    nodes_map: HashMap<NodeId, NodeIdx>,
+    matrices: Vec<DMatrix<f64>>,
+}
 
 impl PCN {
     pub(crate) fn new(
         graph: Graph<PCNode, PCEdge>,
         nodes_map: HashMap<NodeId, NodeIndex<DefaultIx>>,
+        matrices: Vec<DMatrix<f64>>,
     ) -> Self {
-        Self(graph, nodes_map)
+        Self {
+            graph,
+            nodes_map,
+            matrices,
+        }
     }
 
     fn node_size(&self, node_index: &NodeIdx) -> usize {
-        self.0.node_weight(*node_index).unwrap().size()
+        self.graph.node_weight(*node_index).unwrap().size()
     }
 
+    fn edge_weight_matrix<'a>(&'a self, edge_weight: &PCEdge) -> &'a DMatrix<f64> {
+        &self.matrices[edge_weight.weight_matrix_index]
+    }
+
+    /*
+    fn edge_weight_matrix_mut<'a>(&'a mut self, edge_weight: &PCEdge) -> &'a mut DMatrix<f64> {
+        &mut self.matrices[edge_weight.weight_matrix_index]
+    }
+    */
+
     pub fn compute_predictions(&mut self) {
-        for node_index in self.0.node_indices() {
+        for node_index in self.graph.node_indices() {
             let mut node_predictions = vec![0.; self.node_size(&node_index)];
 
-            for edge in self.0.edges_directed(node_index, Direction::Incoming) {
+            for edge in self.graph.edges_directed(node_index, Direction::Incoming) {
                 let n2 = edge.source();
                 let mut temp_vec = vec![0.; self.node_size(&n2)];
 
-                self.0.node_weight(n2).unwrap().activation(&mut temp_vec);
+                self.graph
+                    .node_weight(n2)
+                    .unwrap()
+                    .activation(&mut temp_vec);
 
+                self.edge_weight_matrix(edge.weight())
+                    .mul_vec_add(&temp_vec, &mut node_predictions);
+
+                /*
                 edge.weight()
                     .weights
                     .mul_vec_add(&temp_vec, &mut node_predictions);
+                    */
             }
 
-            self.0
+            self.graph
                 .node_weight_mut(node_index)
                 .unwrap()
                 .set_predictions(&node_predictions);
@@ -231,25 +318,27 @@ impl PCN {
     }
 
     pub fn compute_errors(&mut self) {
-        for node_index in self.0.node_indices() {
-            self.0.node_weight_mut(node_index).unwrap().compute_error();
+        for node_index in self.graph.node_indices() {
+            self.graph
+                .node_weight_mut(node_index)
+                .unwrap()
+                .compute_error();
         }
     }
 
     pub fn compute_values(&mut self, gamma: f64) {
-        for node_index in self.0.node_indices() {
-            let w = self.0.node_weight_mut(node_index).unwrap();
+        for node_index in self.graph.node_indices() {
+            let w = self.graph.node_weight_mut(node_index).unwrap();
 
             let mut acc = vec![0.; w.size()];
 
-            for edge in self.0.edges_directed(node_index, Direction::Outgoing) {
+            for edge in self.graph.edges_directed(node_index, Direction::Outgoing) {
                 let n2 = edge.target();
-                edge.weight()
-                    .weights
+                self.edge_weight_matrix(edge.weight())
                     .trans_mul_vec_add(self.get_node_errors(&n2), &mut acc);
             }
 
-            self.0
+            self.graph
                 .node_weight(node_index)
                 .unwrap()
                 .activation_diff_mul(&mut acc);
@@ -264,39 +353,78 @@ impl PCN {
         }
     }
 
+    pub fn inference_step(&mut self, gamma: f64) {
+        self.compute_predictions();
+        self.compute_errors();
+        self.compute_values(gamma);
+    }
+
     pub fn inference_steps(&mut self, gamma: f64, steps: usize) {
         for _i in 0..steps {
-            self.compute_predictions();
-            self.compute_errors();
-            self.compute_values(gamma);
+            self.inference_step(gamma);
+        }
+    }
+
+    pub fn inference_converge(&mut self, gamma: f64, threshold: f64) {
+        let mut energy = self.get_total_energy();
+
+        loop {
+            self.inference_step(gamma);
+            let new_energy = self.get_total_energy();
+            if (energy - new_energy) < threshold {
+                break;
+            }
+            energy = new_energy;
+        }
+    }
+
+    pub fn infer_and_learn(&mut self, gamma: f64, alpha: f64, steps: usize) {
+        for _i in 0..steps {
+            self.inference_step(gamma);
+            self.learning_step(alpha);
         }
     }
 
     pub fn learning_step(&mut self, alpha: f64) {
-        for edge_index in self.0.edge_indices() {
-            if let Some((source, target)) = self.0.edge_endpoints(edge_index) {
+        for edge_index in self.graph.edge_indices() {
+            if let Some((source, target)) = self.graph.edge_endpoints(edge_index) {
                 let errors = self.get_node_errors(&target);
                 let values_size = self.node_size(&source);
                 let mut temp_values = vec![0.; values_size];
                 let mut temp_errors = vec![0.; errors.len()];
 
-                self.0
+                self.graph
                     .node_weight(source)
                     .unwrap()
-                    .activation_diff(&mut temp_values);
+                    .activation(&mut temp_values);
 
                 temp_errors.copy_from_slice(&errors);
 
-                self.0
+                let matrix_index = self
+                    .graph
+                    .edge_weight(edge_index)
+                    .unwrap()
+                    .weight_matrix_index;
+                self.matrices[matrix_index].add_vecs_mul(alpha, &temp_errors, &temp_values);
+                /*
+                let edge = self.graph.edge_weight(edge_index).unwrap().clone();
+
+                self.edge_weight_matrix_mut(&edge)
+                    .add_vecs_mul(alpha, &temp_errors, &temp_values);
+                    */
+                /*
+                self.graph
                     .edge_weight_mut(edge_index)
                     .unwrap()
                     .weights
                     .add_vecs_mul(alpha, &temp_errors, &temp_values);
+                    */
             }
         }
 
-        for node_index in self.0.node_indices() {
-            if let Some(PCNode::Memory { values, errors, .. }) = self.0.node_weight_mut(node_index)
+        for node_index in self.graph.node_indices() {
+            if let Some(PCNode::Memory { values, errors, .. }) =
+                self.graph.node_weight_mut(node_index)
             {
                 for i in 0..values.len() {
                     values[i] -= alpha * errors[i];
@@ -306,8 +434,8 @@ impl PCN {
     }
 
     pub fn get_node_values(&self, id: NodeId) -> Option<&[f64]> {
-        let index = self.1.get(&id)?;
-        match self.0.node_weight(*index).unwrap() {
+        let index = self.nodes_map.get(&id)?;
+        match self.graph.node_weight(*index).unwrap() {
             PCNode::Sensor { values, .. } => Some(values),
             PCNode::Internal { values, .. } => Some(values),
             PCNode::Memory { values, .. } => Some(values),
@@ -315,7 +443,7 @@ impl PCN {
     }
 
     fn update_node_values(&mut self, index: &NodeIdx, delta: &[f64]) {
-        match self.0.node_weight_mut(*index).unwrap() {
+        match self.graph.node_weight_mut(*index).unwrap() {
             PCNode::Sensor { values, mask, .. } => {
                 for i in 0..values.len() {
                     values[i] += if !mask[i] { delta[i] } else { 0. };
@@ -326,16 +454,18 @@ impl PCN {
                     values[i] += delta[i];
                 }
             }
-            PCNode::Memory { values, .. } => {
+            PCNode::Memory { .. } => {
+                /*
                 for i in 0..values.len() {
                     values[i] += delta[i];
                 }
+                */
             }
         }
     }
 
     fn get_node_errors(&self, index: &NodeIdx) -> &[f64] {
-        match self.0.node_weight(*index).unwrap() {
+        match self.graph.node_weight(*index).unwrap() {
             PCNode::Sensor { errors, .. } => errors,
             PCNode::Internal { errors, .. } => errors,
             PCNode::Memory { errors, .. } => errors,
@@ -343,13 +473,20 @@ impl PCN {
     }
 
     #[allow(dead_code)]
-    fn get_node_energy(&self, index: &NodeIdx) -> f64 {
-        self.0.node_weight(*index).unwrap().energy()
+    pub fn get_node_energy(&self, index: &NodeIdx) -> f64 {
+        self.graph.node_weight(*index).unwrap().energy()
+    }
+
+    pub fn get_total_energy(&self) -> f64 {
+        self.graph
+            .node_weights()
+            .map(|node_weight| node_weight.energy())
+            .sum()
     }
 
     pub fn set_sensor_values(&mut self, node_id: NodeId, new_values: &[f64], new_mask: &[bool]) {
-        let index = self.1.get(&node_id).unwrap();
-        let Some(w) = self.0.node_weight_mut(*index) else {
+        let index = self.nodes_map.get(&node_id).unwrap();
+        let Some(w) = self.graph.node_weight_mut(*index) else {
             panic!("Undefined node: {:?}", node_id);
         };
 
@@ -371,8 +508,8 @@ impl PCN {
     }
 
     pub fn set_layer_values(&mut self, node_id: NodeId, new_values: &[f64]) {
-        let index = self.1.get(&node_id).unwrap();
-        let Some(w) = self.0.node_weight_mut(*index) else {
+        let index = self.nodes_map.get(&node_id).unwrap();
+        let Some(w) = self.graph.node_weight_mut(*index) else {
             panic!("Undefined node: {:?}", node_id);
         };
 
@@ -391,11 +528,27 @@ impl PCN {
 
     #[allow(dead_code)]
     pub fn randomize_node(&mut self, node_id: NodeId, amount: f64, rng: &mut impl Rng) {
-        let index = self.1.get(&node_id).unwrap();
-        let Some(w) = self.0.node_weight_mut(*index) else {
+        let index = self.nodes_map.get(&node_id).unwrap();
+        let Some(w) = self.graph.node_weight_mut(*index) else {
             panic!("Undefined node: {:?}", node_id);
         };
 
-        w.randomize(amount, rng);
+        w.set_to_random(amount, rng);
+    }
+
+    #[allow(dead_code)]
+    pub fn pp(&self) {
+        println!("Nodes");
+        for node_id in self.nodes_map.keys() {
+            let node_index = self.nodes_map.get(&node_id).unwrap();
+            let node_data = self.graph.node_weight(*node_index).unwrap();
+            println!("Node {:?}:", &node_id);
+            println!(" - values: {:?}", node_data.values());
+            println!(" - errors: {:?}", node_data.errors());
+            println!(" - energy: {:?}", node_data.energy());
+        }
+
+        println!("Edges");
+        println!(" - coming soon");
     }
 }

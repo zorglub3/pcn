@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum ActivationFn {
@@ -33,6 +33,35 @@ impl ActivationFn {
             SoftPlus => {
                 for i in 0..input.len() {
                     output[i] = (1. + input[i].exp()).ln();
+                }
+            }
+        }
+    }
+
+    pub fn eval_mul(&self, input: &[f64], output: &mut [f64]) {
+        debug_assert_eq!(input.len(), output.len());
+
+        use ActivationFn::*;
+
+        match self {
+            Tanh => {
+                for i in 0..input.len() {
+                    output[i] *= input[i].tanh();
+                }
+            }
+            ReLu => {
+                for i in 0..input.len() {
+                    output[i] *= input[i].max(0.);
+                }
+            }
+            LeakyReLu(a) => {
+                for i in 0..input.len() {
+                    output[i] *= input[i].max(a * input[i]);
+                }
+            }
+            SoftPlus => {
+                for i in 0..input.len() {
+                    output[i] *= (1. + input[i].exp()).ln();
                 }
             }
         }

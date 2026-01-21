@@ -1,13 +1,13 @@
-use crate::dmatrix::DMatrix;
 use crate::activation::ActivationFn;
+use crate::dmatrix::DMatrix;
 use crate::pcn::PCEdge;
 use crate::pcn::PCNode;
 use crate::pcn::PCN;
 use petgraph::graph::Graph;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::prelude::*;
-use rand::Rng;
-use serde::{Serialize, Deserialize};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct NodeId(usize);
@@ -103,13 +103,18 @@ impl Spec {
         MatrixId::new(index)
     }
 
-    pub fn add_random_weight_matrix(&mut self, from_size: usize, to_size: usize, rng: &mut impl Rng) -> MatrixId {
+    pub fn add_random_weight_matrix(
+        &mut self,
+        from_size: usize,
+        to_size: usize,
+        rng: &mut impl Rng,
+    ) -> MatrixId {
         let index = self.matrices.len();
 
         let mut matrix = DMatrix::new(to_size, from_size, 0.);
         for row in 0..matrix.rows() {
             for col in 0..matrix.cols() {
-                matrix[(row, col)] = rng.random_range(-1. .. 1.);
+                matrix[(row, col)] = rng.random_range(-1. ..1.);
             }
         }
 
@@ -135,7 +140,11 @@ impl Spec {
             panic!("add_ege_with_matrix: mimatched matrix size");
         }
 
-        let edge_data = Edge { from, to, matrix_id };
+        let edge_data = Edge {
+            from,
+            to,
+            matrix_id,
+        };
 
         self.edges.push(edge_data);
     }
@@ -153,14 +162,31 @@ impl Spec {
 
         let matrix_id = self.add_weight_matrix(from_node.size, to_node.size);
 
-        let edge_data = Edge { from, to, matrix_id };
+        let edge_data = Edge {
+            from,
+            to,
+            matrix_id,
+        };
 
         self.edges.push(edge_data);
+    }
+
+    pub fn randomize_matrix(&mut self, matrix_id: MatrixId, amount: f64, rng: &mut impl Rng) {
+        assert!(matrix_id.0 < self.matrices.len());
+
+        self.matrices[matrix_id.0].randomize(amount, rng);
+    }
+
+    pub fn randomize_all_matrices(&mut self, amount: f64, rng: &mut impl Rng) {
+        for matrix in self.matrices.iter_mut() {
+            matrix.randomize(amount, rng);
+        }
     }
 
     pub fn build_model(&self) -> PCN {
         let mut graph = Graph::<PCNode, PCEdge>::new();
         let mut nodes_map = HashMap::new();
+        let matrices = self.matrices.clone();
 
         for index in 0..self.nodes.len() {
             let node_id = NodeId(index);
@@ -180,17 +206,18 @@ impl Spec {
             let node_source = nodes_map.get(&edge.from).unwrap();
             let node_target = nodes_map.get(&edge.to).unwrap();
 
-            let source_size = self.nodes[edge.from.0].size;
-            let target_size = self.nodes[edge.to.0].size;
+            // let source_size = self.nodes[edge.from.0].size;
+            // let target_size = self.nodes[edge.to.0].size;
 
             graph.add_edge(
                 *node_source,
                 *node_target,
-                PCEdge::new(source_size, target_size),
+                PCEdge::new(edge.matrix_id.0),
+                // PCEdge::new(source_size, target_size, edge.matrix_id),
             );
         }
 
-        PCN::new(graph, nodes_map)
+        PCN::new(graph, nodes_map, matrices)
     }
 
     pub fn save_model(&self, filename: &str) -> std::io::Result<()> {

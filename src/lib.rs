@@ -5,8 +5,8 @@ mod spec;
 #[cfg(feature = "tf")]
 mod tf;
 
-pub use spec::*;
 pub use activation::ActivationFn;
+pub use spec::*;
 /*
 pub use activation::ActivationFn;
 use dmatrix::DMatrix;

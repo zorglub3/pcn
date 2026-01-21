@@ -1,8 +1,10 @@
+use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::{AddAssign, Index, IndexMut, Mul};
-use serde::{Serialize, Deserialize};
 
-#[derive(Serialize, Deserialize)]
+/// A Dense matrix with data stored row-wise
+#[derive(Serialize, Deserialize, Clone)]
 pub struct DMatrix<T> {
     rows: usize,
     cols: usize,
@@ -10,6 +12,7 @@ pub struct DMatrix<T> {
 }
 
 impl<T: Debug> DMatrix<T> {
+    /// Prettyh print the matrix to stdout.
     #[allow(dead_code)]
     pub fn pp(&self) {
         for r in 0..self.rows {
@@ -22,14 +25,18 @@ impl<T: Debug> DMatrix<T> {
 }
 
 impl<T> DMatrix<T> {
+    /// Get the number of rows of the matrix
     pub fn rows(&self) -> usize {
         self.rows
     }
 
+    /// Get the number of columns for the matrix
     pub fn cols(&self) -> usize {
         self.cols
     }
 
+    /// Compute the index in the data block for some row and column
+    #[inline]
     fn row_col_to_index(&self, r: usize, c: usize) -> usize {
         r * self.cols + c
     }
@@ -52,6 +59,9 @@ impl<T> IndexMut<(usize, usize)> for DMatrix<T> {
 }
 
 impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
+    /// Given two column vectors, v1 and v2, compute the matrix v1 * v2^T.
+    /// Then scale the matrix by alpha and add it to self. Note that
+    /// |v1| == rows(self) and |v2| == columns(self)
     pub fn add_vecs_mul(&mut self, alpha: T, v1: &[T], v2: &[T]) {
         debug_assert_eq!(self.rows, v1.len());
         debug_assert_eq!(self.cols, v2.len());
@@ -63,6 +73,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         }
     }
 
+    /// Multiply one row of 'self' with one column of 'm'.
     #[allow(dead_code)]
     pub fn mul_row_col(&self, m: &DMatrix<T>, r: usize, c: usize) -> T {
         debug_assert_eq!(self.cols, m.rows);
@@ -81,6 +92,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         acc
     }
 
+    /// Multiply one row of self with vector 'v' and accumulate
+    /// the result.
     pub fn mul_row_vec(&self, v: &[T], r: usize) -> T {
         debug_assert_eq!(self.cols, v.len());
         debug_assert!(r < self.rows);
@@ -97,6 +110,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         acc
     }
 
+    /// Multiply one column of self with vector 'v' and accumulate
+    /// the result.
     pub fn mul_col_vec(&self, v: &[T], c: usize) -> T {
         debug_assert_eq!(self.rows, v.len());
         debug_assert!(c < self.cols);
@@ -112,6 +127,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         acc
     }
 
+    /// Multiply matrix m1 with matrix m2 and assign the result to self.
     #[allow(dead_code)]
     pub fn mul_assign(&mut self, m1: &DMatrix<T>, m2: &DMatrix<T>) {
         debug_assert_eq!(self.rows, m1.rows);
@@ -125,6 +141,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         }
     }
 
+    /// Multiply self with input vector (a column vector) to produce
+    /// output (overwritten).
     #[allow(dead_code)]
     pub fn mul_vec(&self, input: &[T], output: &mut [T]) {
         debug_assert_eq!(self.cols, input.len());
@@ -135,6 +153,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         }
     }
 
+    /// Multiply self with input column vector and add the result to
+    /// output vector.
     pub fn mul_vec_add(&self, input: &[T], output: &mut [T]) {
         debug_assert_eq!(self.cols, input.len());
         debug_assert_eq!(self.rows, output.len());
@@ -144,6 +164,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         }
     }
 
+    /// Transpose self and multiply with column vector and add the
+    /// result to output vector.
     pub fn trans_mul_vec_add(&self, input: &[T], output: &mut [T]) {
         debug_assert_eq!(self.rows, input.len());
         debug_assert_eq!(self.cols, output.len());
@@ -155,6 +177,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
 }
 
 impl<T: AddAssign + Copy> DMatrix<T> {
+    /// Add matrix mat to self.
     #[allow(dead_code)]
     pub fn add_matrix(&mut self, mat: &DMatrix<T>) {
         debug_assert_eq!(self.rows, mat.rows);
@@ -167,6 +190,7 @@ impl<T: AddAssign + Copy> DMatrix<T> {
 }
 
 impl<T: Clone> DMatrix<T> {
+    /// Assign values in matrix m to self - overwrite old values.
     #[allow(dead_code)]
     pub fn assign(&mut self, m: &DMatrix<T>) {
         debug_assert_eq!(self.rows, m.rows);
@@ -177,6 +201,8 @@ impl<T: Clone> DMatrix<T> {
         }
     }
 
+    /// Add one row to self, thus incrementing row count by one,
+    /// Note: Does not work for empty matrix (with no rows).
     #[allow(dead_code)]
     pub fn add_row(&mut self, row: &[T]) {
         debug_assert_eq!(self.cols, row.len());
@@ -188,9 +214,24 @@ impl<T: Clone> DMatrix<T> {
         self.rows += 1;
     }
 
+    /// Create a new matrix with given number of rows and columns.
+    /// Clone the default value.
     pub fn new(rows: usize, cols: usize, default: T) -> Self {
         let data = vec![default; rows * cols];
 
         Self { rows, cols, data }
+    }
+}
+
+impl DMatrix<f64> {
+    /// Randomize the values in matrix. Assign a new random value to
+    /// each element. The values are uniformly distributed between
+    /// minus amount and plus amount (not incl).
+    pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
+        for r in 0..self.rows {
+            for c in 0..self.cols() {
+                self[(r, c)] = rng.random_range(-amount..amount);
+            }
+        }
     }
 }
