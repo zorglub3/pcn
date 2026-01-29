@@ -2,34 +2,27 @@ use pcn::ActivationFn::Tanh;
 use pcn::Spec;
 use rand::prelude::*;
 
-const SENSOR_SIZE: usize = 3;
-const INTERNAL_SIZE: usize = 10;
+const SENSOR_SIZE: usize = 1;
+const INTERNAL_SIZE: usize = 90;
 const MEMORY_SIZE: usize = 2;
 const INTERNAL_LAYER_COUNT: usize = 4;
 
-const GAMMA: f64 = 0.1;
+const GAMMA: f64 = 0.02;
 const ALPHA: f64 = 0.1;
-const INFERENCE_STEPS: usize = 10;
-const LEARNING_STEPS: usize = 20000;
-const LEARN_PER_SAMPLE: usize = 1;
+const INFERENCE_STEPS: usize = 32;
+const LEARNING_STEPS: usize = 8000;
+    // (INTERNAL_SIZE * INTERNAL_LAYER_COUNT + SENSOR_SIZE + MEMORY_SIZE) * 200;
 
-#[allow(dead_code)]
-fn random_xor_pattern(rng: &mut impl Rng) -> [f64; 3] {
-    let a = rng.random::<bool>();
-    let b = rng.random::<bool>();
-    let c = if a == b { false } else { true };
+const F64_TRUE: f64 = 0.75;
+const F64_FALSE: f64 = -0.75;
 
+const TEST_PATTERNS: [([bool; 2], [bool; 1]); 4] =
     [
-        if a { 1. } else { -1. },
-        if b { 1. } else { -1. },
-        if c { 1. } else { -1. },
-    ]
-}
-
-fn random_pattern(rng: &mut impl Rng) -> [f64; 3] {
-    let bool_pattern = random_bool_pattern(rng);
-    bool_to_f64(&bool_pattern)
-}
+        ([true, true], [false]),
+        ([true, false], [true]),
+        ([false, true], [true]),
+        ([false, false], [false]),
+    ];
 
 fn random_bool_pattern<const C: usize>(rng: &mut impl Rng) -> [bool; C] {
     let mut x = [true; C];
@@ -42,19 +35,19 @@ fn random_bool_pattern<const C: usize>(rng: &mut impl Rng) -> [bool; C] {
 fn bool_to_f64<const C: usize>(pattern: &[bool; C]) -> [f64; C] {
     let mut x = [0.; C];
     for i in 0..C {
-        x[i] = if pattern[i] { 1. } else { -1. };
+        x[i] = if pattern[i] { F64_TRUE } else { F64_FALSE };
     }
     x
 }
 
-fn is_xor_pattern(p: &[bool; 3]) -> bool {
-    p[2] == !(p[0] == p[1])
+fn xor_pattern(pattern: &[bool; 2]) -> [bool; 1] {
+    [pattern[0] != pattern[1]]
 }
 
 fn main() {
     let mut rng = rand::rng();
 
-    let mut spec = Spec::new();
+    let mut spec = Spec::default();
     let sensor = spec.add_sensor_node(SENSOR_SIZE, Tanh);
     let memory = spec.add_output_node(MEMORY_SIZE, Tanh);
 
@@ -69,71 +62,58 @@ fn main() {
     spec.add_edge(hidden_layers[INTERNAL_LAYER_COUNT - 1], sensor);
     spec.add_edge(memory, hidden_layers[0]);
 
-    spec.randomize_all_matrices(1., &mut rng);
+    spec.randomize_all_matrices(0.5, &mut rng);
 
     let mut xor = spec.build_model();
 
     let mask = vec![true; SENSOR_SIZE];
 
     for i in 0..LEARNING_STEPS {
-        let bp = random_bool_pattern::<3>(&mut rng);
-        let is_xor = is_xor_pattern(&bp);
-        let sensor_data = bool_to_f64(&bp);
-        let mp = [is_xor, is_xor];
-        let memory_data = bool_to_f64(&mp);
-        // let sensor_data = random_pattern(&mut rng);
-        // let memory_data = [1., 1.];
+        let bool_input_pattern = random_bool_pattern(&mut rng);
+        let f64_input_pattern = bool_to_f64(&bool_input_pattern);
+        let bool_output_pattern = xor_pattern(&bool_input_pattern); 
+        let f64_output_pattern = bool_to_f64(&bool_output_pattern);
 
-        // println!("learning: {:?} => {:?}", &memory_data, &sensor_data);
+        xor.reset_all_nodes();
+        xor.set_memory_values(memory, &f64_input_pattern);
+        xor.inference_steps(GAMMA, INFERENCE_STEPS);
+        // xor.pp();
 
-        for _k in 0..LEARN_PER_SAMPLE {
-            for hidden in &hidden_layers {
-                xor.randomize_node(*hidden, 0.1, &mut rng);
-            }
+        xor.set_memory_values(memory, &f64_input_pattern);
+        xor.set_sensor_values(sensor, &f64_output_pattern, &mask);
 
-            xor.set_sensor_values(sensor, &sensor_data, &mask);
-            xor.set_layer_values(memory, &memory_data);
-
-            // xor.inference_converge(GAMMA, 1.0);
-            xor.inference_steps(GAMMA, INFERENCE_STEPS);
-            // xor.infer_and_learn(GAMMA, ALPHA, INFERENCE_STEPS);
-
-            // println!("final energy {}", xor.get_total_energy());
-
-            xor.learning_step(ALPHA);
-        }
+        xor.inference_steps(GAMMA, INFERENCE_STEPS);
+        xor.learning_step(ALPHA);
+        // xor.pp();
 
         if i % 100 == 0 {
-            println!("learned {} samples, energy {}", i, xor.get_total_energy());
+            println!("learned {} samples", i);
+            println!("- total energy {}", xor.get_total_energy());
         }
-
-        // println!("=======================================");
     }
     println!("learned {} samples. done.", LEARNING_STEPS);
 
-    let test_mask = [true, true, false];
-
-
     println!("testing...");
-    for _x in 0..10 {
-        for hidden in &hidden_layers {
-            xor.randomize_node(*hidden, 0.01, &mut rng);
-        }
 
-        let pattern = random_pattern(&mut rng);
+    let mut total_error = 0.;
 
-        println!("Before inference {:?}", &pattern);
+    for (bool_input_pattern, bool_output_pattern) in TEST_PATTERNS {
+        let f64_input_pattern = bool_to_f64(&bool_input_pattern);
+        let f64_output_pattern = bool_to_f64(&bool_output_pattern);
 
-        xor.set_layer_values(memory, &[1., 1.]);
-        xor.set_sensor_values(sensor, &pattern, &test_mask);
-        xor.inference_steps(0., 1);
-        println!(" - energy before {}", xor.get_total_energy());
-        xor.inference_steps(GAMMA, 320);
+        xor.reset_all_nodes();
+        xor.set_memory_values(memory, &f64_input_pattern);
+        xor.set_sensor_values(sensor, &[0.], &[false]);
 
-        let node_values = xor.get_node_values(sensor).unwrap();
+        xor.inference_steps(GAMMA, INFERENCE_STEPS);
 
-        println!(" - got {:?}", &node_values);
-        println!(" - energy after {}", xor.get_total_energy());
-        // println!(" - Got {:?}", node_values.iter().map(|x| x.tanh()).collect::<Vec<f64>>());
+        let output = xor.get_node_values(sensor)[0].tanh();
+        let error = f64_output_pattern[0] - output;
+        total_error += error * error;
+
+        println!(" - {:?} => {:?}", &f64_input_pattern, output);
+        println!(" - error: {}", error);
     }
+
+    println!("Total error (sum of squares): {}", total_error);
 }

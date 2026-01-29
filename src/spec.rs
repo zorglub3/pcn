@@ -47,7 +47,7 @@ struct Edge {
     matrix_id: MatrixId,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Spec {
     nodes: Vec<Node>,
     edges: Vec<Edge>,
@@ -55,14 +55,6 @@ pub struct Spec {
 }
 
 impl Spec {
-    pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            matrices: Vec::new(),
-        }
-    }
-
     fn add_node(&mut self, node: Node) -> NodeId {
         let index = self.nodes.len();
 

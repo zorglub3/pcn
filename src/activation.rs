@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum ActivationFn {
     Tanh,
+    Logistic,
     ReLu,
     LeakyReLu(f64),
     SoftPlus,
@@ -18,6 +19,11 @@ impl ActivationFn {
             Tanh => {
                 for i in 0..input.len() {
                     output[i] = input[i].tanh();
+                }
+            }
+            Logistic => {
+                for i in 0..input.len() {
+                    output[i] = 1. / (1. + (-input[i]).exp());
                 }
             }
             ReLu => {
@@ -47,6 +53,11 @@ impl ActivationFn {
             Tanh => {
                 for i in 0..input.len() {
                     output[i] *= input[i].tanh();
+                }
+            }
+            Logistic => {
+                for i in 0..input.len() {
+                    output[i] *= 1. /  (1. + (-input[i]).exp());
                 }
             }
             ReLu => {
@@ -79,6 +90,12 @@ impl ActivationFn {
                     output[i] = 1. - v * v;
                 }
             }
+            Logistic => {
+                for i in 0..input.len() {
+                    let d = 1. / (1. + (-input[i]).exp());
+                    output[i] = d * (1. - d);
+                }
+            }
             ReLu => {
                 for i in 0..input.len() {
                     output[i] = if input[i] < 0. { 0. } else { 1. };
@@ -109,6 +126,12 @@ impl ActivationFn {
                     output[i] *= 1. - v * v;
                 }
             }
+            Logistic => {
+                for i in 0..input.len() {
+                    let d = 1. / (1. + (-input[i]).exp());
+                    output[i] *= d * (1. - d);
+                }
+            }
             ReLu => {
                 for i in 0..input.len() {
                     output[i] *= if input[i] < 0. { 0. } else { 1. };
@@ -124,6 +147,23 @@ impl ActivationFn {
                     output[i] *= 1. / (1. + (-input[i]).exp());
                 }
             }
+        }
+    }
+
+    pub fn diff2(&self, input: &[f64], output: &mut [f64]) {
+        debug_assert_eq!(input.len(), output.len());
+
+        use ActivationFn::*;
+
+        match self {
+            Tanh => {
+                for i in 0..input.len() {
+                    let v = input[i].tanh();
+                    let d = 1. - v * v;
+                    output[i] = -2. * d * v;
+                }
+            }
+            _ => unimplemented!("coming soon"),
         }
     }
 }

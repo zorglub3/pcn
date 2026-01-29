@@ -19,7 +19,7 @@ impl<T: Debug> DMatrix<T> {
             for c in 0..self.cols {
                 print!("{:?} ", self[(r, c)]);
             }
-            println!("");
+            println!();
         }
     }
 }
@@ -38,6 +38,8 @@ impl<T> DMatrix<T> {
     /// Compute the index in the data block for some row and column
     #[inline]
     fn row_col_to_index(&self, r: usize, c: usize) -> usize {
+        debug_assert!(r < self.rows());
+        debug_assert!(c < self.cols());
         r * self.cols + c
     }
 }
@@ -62,6 +64,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
     /// Given two column vectors, v1 and v2, compute the matrix v1 * v2^T.
     /// Then scale the matrix by alpha and add it to self. Note that
     /// |v1| == rows(self) and |v2| == columns(self)
+    #[allow(unused)]
     pub fn add_vecs_mul(&mut self, alpha: T, v1: &[T], v2: &[T]) {
         debug_assert_eq!(self.rows, v1.len());
         debug_assert_eq!(self.cols, v2.len());
@@ -102,8 +105,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
 
         let mut i1 = r * self.cols;
 
-        for i2 in 0..v.len() {
-            acc += self.data[i1] * v[i2];
+        for item in v {
+            acc += self.data[i1] * *item;
             i1 += 1;
         }
 
@@ -119,8 +122,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         let mut acc = T::default();
         let mut i1 = c;
 
-        for i2 in 0..v.len() {
-            acc += self.data[i1] * v[i2];
+        for item in v {
+            acc += self.data[i1] * *item;
             i1 += self.cols;
         }
 
@@ -148,8 +151,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         debug_assert_eq!(self.cols, input.len());
         debug_assert_eq!(self.rows, output.len());
 
-        for i in 0..output.len() {
-            output[i] = self.mul_row_vec(input, i);
+        for (i, item) in output.iter_mut().enumerate() {
+            *item = self.mul_row_vec(input, i);
         }
     }
 
@@ -159,8 +162,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         debug_assert_eq!(self.cols, input.len());
         debug_assert_eq!(self.rows, output.len());
 
-        for i in 0..output.len() {
-            output[i] += self.mul_row_vec(input, i);
+        for (i, item) in output.iter_mut().enumerate() {
+            *item += self.mul_row_vec(input, i);
         }
     }
 
@@ -170,8 +173,8 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
         debug_assert_eq!(self.rows, input.len());
         debug_assert_eq!(self.cols, output.len());
 
-        for i in 0..output.len() {
-            output[i] += self.mul_col_vec(input, i);
+        for (i, item) in output.iter_mut().enumerate() {
+            *item += self.mul_col_vec(input, i);
         }
     }
 }
@@ -228,10 +231,32 @@ impl DMatrix<f64> {
     /// each element. The values are uniformly distributed between
     /// minus amount and plus amount (not incl).
     pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
-        for r in 0..self.rows {
-            for c in 0..self.cols() {
-                self[(r, c)] = rng.random_range(-amount..amount);
+        if amount <= f64::EPSILON {
+            self.data.fill(0.);
+        } else {
+            for item in &mut self.data {
+                *item = rng.random_range(-amount..amount);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn new_matrix_has_correct_rows_and_cols() {
+        let m = DMatrix::new(10, 20, 1_i32);
+        assert_eq!(m.rows(), 10);
+        assert_eq!(m.cols(), 20);
+    }
+
+    #[test]
+    fn matrix_computes_correct_index() {
+        let m = DMatrix::new(3, 5, 1_i32);
+        assert_eq!(m.row_col_to_index(0, 2), 2);
+        assert_eq!(m.row_col_to_index(2, 0), 2 * 5);
+        assert_eq!(m.row_col_to_index(1, 1), 1 * 5 + 1);
     }
 }

@@ -6,7 +6,7 @@ const INTERNAL_SIZE: usize = 4;
 const MEMORY_SIZE: usize = 4;
 const GAMMA: f64 = 0.1;
 const ALPHA: f64 = 0.1;
-const INFERENCE_STEPS: usize = 100;
+const INFERENCE_STEPS: usize = 32;
 const IL_STEPS: usize = 200;
 
 fn generate_sensor_pattern(pattern_number: usize, pattern_values: &mut [f64]) {
@@ -22,7 +22,7 @@ fn generate_sensor_pattern(pattern_number: usize, pattern_values: &mut [f64]) {
 
 fn main() {
     println!("Creating spec for PCN");
-    let mut spec = Spec::new();
+    let mut spec = Spec::default();
     let sensor = spec.add_sensor_node(SENSOR_SIZE, ActivationFn::Tanh);
     let hidden = spec.add_internal_node(INTERNAL_SIZE, ActivationFn::Tanh);
     let memory = spec.add_output_node(MEMORY_SIZE, ActivationFn::Tanh);
@@ -68,8 +68,7 @@ fn main() {
     assoc_mem.inference_steps(GAMMA, INFERENCE_STEPS);
 
     let node_values = assoc_mem
-        .get_node_values(sensor)
-        .expect("Could not get sensor node values");
+        .get_node_values(sensor);
 
     println!("Original pattern: {:?}", &pattern);
     println!("Recalled pattern: {:?}", &node_values);
