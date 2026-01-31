@@ -239,6 +239,13 @@ impl DMatrix<f64> {
             }
         }
     }
+
+    pub fn randomize_xavier(&mut self, rng: &mut impl Rng) {
+        let amount = (6. / (self.rows() + self.cols()) as f64).sqrt();
+        for item in &mut self.data {
+            *item = rng.random_range(-amount..amount);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -258,5 +265,113 @@ mod test {
         assert_eq!(m.row_col_to_index(0, 2), 2);
         assert_eq!(m.row_col_to_index(2, 0), 2 * 5);
         assert_eq!(m.row_col_to_index(1, 1), 1 * 5 + 1);
+    }
+
+    fn test_matrix_2_3() -> DMatrix<f64> {
+        let mut m = DMatrix::new(2, 3, 0_f64);
+
+        for r in 0..2 {
+            for c in 0..3 {
+                m[(r, c)] = (r as f64) + (c as f64) * 10.;
+            }
+        }
+
+        m
+    }
+
+    fn test_matrix_3_2() -> DMatrix<f64> {
+        let mut m = DMatrix::new(3, 2, 0_f64);
+
+        for r in 0..3 {
+            for c in 0..2 {
+                m[(r, c)] = (r as f64) * 2. + (c as f64) * 5.;
+            }
+        }
+
+        m
+    }
+
+    #[test]
+    fn matrix_index() {
+        let m = test_matrix_2_3();
+
+        assert_eq!(m[(1, 1)], 11.);
+        assert_eq!(m[(1, 2)], 21.);
+        assert_eq!(m[(0, 2)], 20.);
+    }
+
+    #[test]
+    fn test_add_vecs_mul() {
+        let mut m = test_matrix_2_3();
+
+        let v1 = [2., 3.];
+        let v2 = [1., 2., 3.];
+
+        m.add_vecs_mul(0.5, &v1, &v2);
+
+        assert_eq!(m[(1, 1)], 11. + 0.5 * 3. * 2.);
+    }
+
+    #[test]
+    fn test_mul_row_col() {
+        let m = test_matrix_2_3();
+        let m2 = test_matrix_3_2();
+
+        // m(r=1):   1, 11, 21
+        // m2(c=0):  0,  2,  4
+        assert_eq!(m.mul_row_col(&m2, 1, 0), 22. + 84.);
+    }
+
+    #[test]
+    fn test_mul_row_vec() {
+        let m = test_matrix_2_3();
+        let v = [-1., -2., 3.];
+
+        assert_eq!(m.mul_row_vec(&v, 1), -1. + -22. + 63.);
+    }
+
+    #[test]
+    fn test_mul_col_vec() {
+        let m = test_matrix_2_3();
+        let v = [-1., 1.];
+
+        assert_eq!(m.mul_col_vec(&v, 1), -10. + 11.);
+    }
+
+    #[test]
+    fn test_mul_vec() {
+        let m = test_matrix_2_3();
+        let v = [1., 2., 3.];
+        let mut o = [0.; 2];
+
+        m.mul_vec(&v, &mut o);
+
+        assert_eq!(o[0], 2. * 10. + 3. * 20.);
+        assert_eq!(o[1], 1. * 1. + 2. * 11. + 3. * 21.);
+    }
+
+    #[test]
+    fn test_mul_vec_add() {
+        let m = test_matrix_2_3();
+        let v = [1., 2., 3.];
+        let mut o = [-1., -2.];
+
+        m.mul_vec_add(&v, &mut o);
+
+        assert_eq!(o[0], -1. + 2. * 10. + 3. * 20.);
+        assert_eq!(o[1], -2. + 1. * 1. + 2. * 11. + 3. * 21.);
+    }
+
+    #[test]
+    fn test_trans_mul_vec_add() {
+        let m = test_matrix_2_3();
+        let v = [-1., 2.];
+        let mut o = [1., 2., 3.];
+
+        m.trans_mul_vec_add(&v, &mut o);
+
+        assert_eq!(o[0], 1. + 2.);
+        assert_eq!(o[1], 2. + -1. * 10. + 2. * 11.);
+        assert_eq!(o[2], 3. + -1. * 20. + 2. * 21.);
     }
 }

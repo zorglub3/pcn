@@ -55,6 +55,18 @@ pub struct Spec {
 }
 
 impl Spec {
+    pub fn nodes_size(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn edges_size(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn matrices_size(&self) -> usize {
+        self.matrices.len()
+    }
+
     fn add_node(&mut self, node: Node) -> NodeId {
         let index = self.nodes.len();
 
@@ -116,9 +128,9 @@ impl Spec {
     }
 
     pub fn add_edge_with_matrix(&mut self, from: NodeId, to: NodeId, matrix_id: MatrixId) {
-        assert!(from.0 < self.nodes.len());
-        assert!(to.0 < self.nodes.len());
-        assert!(matrix_id.0 < self.matrices.len());
+        debug_assert!(from.0 < self.nodes.len());
+        debug_assert!(to.0 < self.nodes.len());
+        debug_assert!(matrix_id.0 < self.matrices.len());
 
         let from_node = &self.nodes[from.0];
         let to_node = &self.nodes[to.0];
@@ -142,8 +154,8 @@ impl Spec {
     }
 
     pub fn add_edge(&mut self, from: NodeId, to: NodeId) {
-        assert!(from.0 < self.nodes.len());
-        assert!(to.0 < self.nodes.len());
+        debug_assert!(from.0 < self.nodes.len());
+        debug_assert!(to.0 < self.nodes.len());
 
         let from_node = &self.nodes[from.0];
         let to_node = &self.nodes[to.0];
@@ -164,13 +176,20 @@ impl Spec {
     }
 
     pub fn randomize_matrix(&mut self, matrix_id: MatrixId, amount: f64, rng: &mut impl Rng) {
-        assert!(matrix_id.0 < self.matrices.len());
+        debug_assert!(matrix_id.0 < self.matrices.len());
 
         self.matrices[matrix_id.0].randomize(amount, rng);
     }
 
     pub fn randomize_all_matrices(&mut self, amount: f64, rng: &mut impl Rng) {
         for matrix in self.matrices.iter_mut() {
+            matrix.randomize(amount, rng);
+        }
+    }
+
+    pub fn randomize_all_matrices_xavier(&mut self, rng: &mut impl Rng) {
+        for matrix in self.matrices.iter_mut() {
+            let amount = (6. / (matrix.rows() as f64 + matrix.cols() as f64)).sqrt();
             matrix.randomize(amount, rng);
         }
     }
@@ -198,15 +217,7 @@ impl Spec {
             let node_source = nodes_map.get(&edge.from).unwrap();
             let node_target = nodes_map.get(&edge.to).unwrap();
 
-            // let source_size = self.nodes[edge.from.0].size;
-            // let target_size = self.nodes[edge.to.0].size;
-
-            graph.add_edge(
-                *node_source,
-                *node_target,
-                PCEdge::new(edge.matrix_id.0),
-                // PCEdge::new(source_size, target_size, edge.matrix_id),
-            );
+            graph.add_edge(*node_source, *node_target, PCEdge::new(edge.matrix_id.0));
         }
 
         PCN::new(graph, nodes_map, matrices)
@@ -224,5 +235,34 @@ impl Spec {
         let spec: Self = serde_json::from_str(&json_str).unwrap();
 
         Ok(spec)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::activation::ActivationFn;
+
+    #[test]
+    fn default_spec_is_empty() {
+        let spec = Spec::default();
+
+        assert_eq!(spec.nodes_size(), 0);
+        assert_eq!(spec.edges_size(), 0);
+        assert_eq!(spec.matrices_size(), 0);
+    }
+
+    #[test]
+    fn adding_edge_creates_a_matrix() {
+        let mut spec = Spec::default();
+
+        let n1 = spec.add_internal_node(3, ActivationFn::Tanh);
+        let n2 = spec.add_internal_node(4, ActivationFn::Tanh);
+
+        spec.add_edge(n1, n2);
+
+        assert_eq!(spec.nodes_size(), 2);
+        assert_eq!(spec.edges_size(), 1);
+        assert_eq!(spec.matrices_size(), 1);
     }
 }

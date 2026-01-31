@@ -67,8 +67,7 @@ fn main() {
     assoc_mem.set_sensor_values(sensor, &partial_pattern, &partial_mask);
     assoc_mem.inference_steps(GAMMA, INFERENCE_STEPS);
 
-    let node_values = assoc_mem
-        .get_node_values(sensor);
+    let node_values = assoc_mem.get_node_values(sensor);
 
     println!("Original pattern: {:?}", &pattern);
     println!("Recalled pattern: {:?}", &node_values);

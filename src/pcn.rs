@@ -1,5 +1,6 @@
 use crate::activation::ActivationFn;
 use crate::dmatrix::DMatrix;
+use crate::dvector::hadamard_inplace;
 use crate::spec::NodeId;
 use petgraph::graph::DefaultIx;
 use petgraph::graph::Graph;
@@ -117,11 +118,15 @@ impl PCNode {
 
     pub fn set_predictions(&mut self, p: &[f64]) {
         match self {
-            PCNode::Internal { predictions, .. } |
-            PCNode::Sensor { predictions, .. } => {
+            PCNode::Internal { predictions, .. } | PCNode::Sensor { predictions, .. } => {
                 predictions.copy_from_slice(p);
             }
-            PCNode::Memory { predictions, fix_memory, memory_pattern, .. } => {
+            PCNode::Memory {
+                predictions,
+                fix_memory,
+                memory_pattern,
+                ..
+            } => {
                 if *fix_memory {
                     predictions.copy_from_slice(memory_pattern);
                 } else {
@@ -131,44 +136,56 @@ impl PCNode {
         }
     }
 
-    pub fn compute_error(&mut self) {
+    pub fn compute_error(&mut self) -> f64 {
+        let mut err_sum_sqr = 0.;
+
         match self {
             PCNode::Internal {
                 predictions,
                 errors,
                 values,
                 ..
-            } |
-            PCNode::Sensor {
+            }
+            | PCNode::Sensor {
                 predictions,
                 errors,
                 values,
                 ..
-            } |
-            PCNode::Memory {
+            }
+            | PCNode::Memory {
                 predictions,
                 errors,
                 values,
                 ..
             } => {
                 for i in 0..errors.len() {
-                    errors[i] = (values[i] - predictions[i]) / 1.; // TODO Sigma/variance - that thing
+                    let err = values[i] - predictions[i];
+                    err_sum_sqr += err * err;
+                    errors[i] = values[i] - predictions[i]; // TODO Sigma/variance - that thing
                 }
             }
         }
+
+        err_sum_sqr
     }
 
+    /*
     pub fn activation(&self, output: &mut [f64]) {
         self.activation_fn().eval(self.values(), output)
     }
+    */
 
+    /*
     pub fn activation_diff_mul(&self, output: &mut [f64]) {
         self.activation_fn().diff_mul(self.values(), output)
     }
+    */
 
     pub fn set_to_random(&mut self, amount: f64, rng: &mut impl Rng) {
         match self {
-            PCNode::Internal { values, .. } | PCNode::Sensor { values, .. } | PCNode::Memory { values, .. } => {
+            PCNode::Internal { values, .. }
+            | PCNode::Sensor { values, .. }
+            | PCNode::Memory { values, .. } => {
                 values.fill_with(|| rng.random_range(-amount..amount));
             }
         }
@@ -178,18 +195,35 @@ impl PCNode {
         use PCNode::*;
 
         match self {
-            Internal { values, predictions, errors, .. } => {
+            Internal {
+                values,
+                predictions,
+                errors,
+                ..
+            } => {
                 values.fill(0.);
                 predictions.fill(0.);
                 errors.fill(0.);
             }
-            Sensor { values, predictions, errors, mask, .. } => {
+            Sensor {
+                values,
+                predictions,
+                errors,
+                mask,
+                ..
+            } => {
                 values.fill(0.);
                 predictions.fill(0.);
                 errors.fill(0.);
                 mask.fill(false);
             }
-            Memory { values, predictions, errors, fix_memory, .. } => {
+            Memory {
+                values,
+                predictions,
+                errors,
+                fix_memory,
+                ..
+            } => {
                 values.fill(0.);
                 predictions.fill(0.);
                 errors.fill(0.);
@@ -197,6 +231,13 @@ impl PCNode {
             }
         }
     }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum LearningRule {
+    Hebbian,
+    Oja,
 }
 
 #[derive(Clone)]
@@ -244,12 +285,17 @@ impl PCN {
 
     pub fn compute_predictions(&mut self) {
         for node_index in self.graph.node_indices() {
-            let mut node_predictions = vec![0.; self.node_size(&node_index)];
+            let node_size = self.node_size(&node_index);
+            let mut node_predictions = vec![0.; node_size];
+            let mut acc = vec![0.; node_size];
 
             for edge in self.graph.edges_directed(node_index, Direction::Incoming) {
                 let n2 = edge.source();
-                let mut temp_vec = vec![0.; self.node_size(&n2)];
 
+                self.edge_weight_matrix(edge.weight())
+                    .mul_vec_add(self.graph.node_weight(n2).unwrap().values(), &mut acc);
+
+                /*
                 self.graph
                     .node_weight(n2)
                     .unwrap()
@@ -257,22 +303,65 @@ impl PCN {
 
                 self.edge_weight_matrix(edge.weight())
                     .mul_vec_add(&temp_vec, &mut node_predictions);
+                    */
             }
+
+            self.graph
+                .node_weight(node_index)
+                .unwrap()
+                .activation_fn()
+                .eval(&acc, &mut node_predictions);
 
             self.graph
                 .node_weight_mut(node_index)
                 .unwrap()
                 .set_predictions(&node_predictions);
+            /*
+            self.graph
+                .node_weight_mut(node_index)
+                .unwrap()
+                .set_predictions(&node_predictions);
+                */
         }
     }
 
-    pub fn compute_errors(&mut self) {
+    pub fn compute_errors(&mut self) -> f64 {
+        let mut err_sum_sqr = 0.;
         for node_weight in self.graph.node_weights_mut() {
-            node_weight.compute_error();
+            err_sum_sqr += node_weight.compute_error();
         }
+        err_sum_sqr
     }
 
     pub fn compute_values(&mut self, gamma: f64) {
+        for node_index in self.graph.node_indices() {
+            let w = self.graph.node_weight(node_index).unwrap();
+
+            let mut acc = vec![0.; w.size()];
+
+            for edge in self.graph.edges_directed(node_index, Direction::Outgoing) {
+                let n2 = edge.target();
+                let w2 = self.graph.node_weight(n2).unwrap();
+                let mut a = vec![0.; w2.size()];
+                self.edge_weight_matrix(edge.weight())
+                    .mul_vec(w.values(), &mut a);
+                let mut b = vec![0.; w2.size()];
+                w2.activation_fn().diff(&a, &mut b);
+                hadamard_inplace(w2.errors(), &mut b);
+                self.edge_weight_matrix(edge.weight())
+                    .trans_mul_vec_add(&b, &mut acc);
+            }
+
+            let es = self.node_errors(&node_index);
+            for (i, item) in acc.iter_mut().enumerate() {
+                *item -= es[i];
+                *item *= gamma;
+            }
+
+            self.update_node_values(&node_index, &acc);
+        }
+
+        /*
         for node_index in self.graph.node_indices() {
             let w = self.graph.node_weight_mut(node_index).unwrap();
 
@@ -297,13 +386,15 @@ impl PCN {
 
             self.update_node_values(&node_index, &acc);
         }
+        */
     }
 
-    pub fn inference_step(&mut self, gamma: f64) {
+    pub fn inference_step(&mut self, gamma: f64) -> f64 {
         self.compute_predictions();
-        self.compute_errors();
+        let err_sum_sqr = self.compute_errors();
+        // println!("inference step, energy: {}", err_sum_sqr);
         self.compute_values(gamma);
-        // println!("inference step, energy: {}", self.get_total_energy());
+        err_sum_sqr
     }
 
     pub fn inference_steps(&mut self, gamma: f64, steps: usize) {
@@ -311,6 +402,12 @@ impl PCN {
         for _i in 0..steps {
             self.inference_step(gamma);
         }
+    }
+
+    pub fn compute_total_energy(&mut self) -> f64 {
+        self.compute_predictions();
+        self.compute_errors();
+        self.get_total_energy()
     }
 
     pub fn inference_converge(&mut self, gamma: f64, threshold: f64) {
@@ -334,6 +431,41 @@ impl PCN {
     }
 
     pub fn learning_step(&mut self, alpha: f64) {
+        // println!("energy before learning {}", self.compute_total_energy());
+        // self.pp();
+        for edge_index in self.graph.edge_indices() {
+            // TODO Oja's Rule to fix stability problem
+            let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
+            let source_node = self.graph.node_weight(source).unwrap();
+            let target_node = self.graph.node_weight(target).unwrap();
+            let matrix_index = self
+                .graph
+                .edge_weight(edge_index)
+                .unwrap()
+                .weight_matrix_index;
+
+            let mut a = vec![0.; target_node.size()];
+
+            self.matrices[matrix_index].mul_vec(source_node.values(), &mut a);
+
+            let mut b = vec![0.; target_node.size()];
+            target_node.activation_fn().diff(&a, &mut b);
+            hadamard_inplace(target_node.errors(), &mut b);
+
+            let matrix = &mut self.matrices[matrix_index];
+            let values = &source_node.values();
+
+            for r in 0..matrix.rows() {
+                for c in 0..matrix.cols() {
+                    let delta = alpha * b[r] * (values[c] - b[r] * matrix[(r, c)]);
+                    matrix[(r, c)] += delta;
+                }
+            }
+
+            // self.matrices[matrix_index].add_vecs_mul(alpha, &b, &source_node.values());
+        }
+
+        /*
         for edge_index in self.graph.edge_indices() {
             let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
 
@@ -371,7 +503,9 @@ impl PCN {
             }
             // self.matrices[matrix_index].add_vecs_mul(alpha, &temp_errors, &temp_values);
         }
+        */
 
+        /*
         for node_index in self.graph.node_indices() {
             if let Some(PCNode::Memory { values, errors, .. }) =
                 self.graph.node_weight_mut(node_index)
@@ -381,6 +515,9 @@ impl PCN {
                 }
             }
         }
+        */
+        // self.pp();
+        // println!("energy after learning {}", self.compute_total_energy());
     }
 
     pub fn get_node_values(&self, id: NodeId) -> &[f64] {
@@ -389,6 +526,15 @@ impl PCN {
             PCNode::Sensor { values, .. } => values,
             PCNode::Internal { values, .. } => values,
             PCNode::Memory { values, .. } => values,
+        }
+    }
+
+    pub fn get_node_predictions(&self, id: NodeId) -> &[f64] {
+        let index = self.nodes_map.get(&id).unwrap();
+        match self.graph.node_weight(*index).unwrap() {
+            PCNode::Sensor { predictions, .. } => predictions,
+            PCNode::Internal { predictions, .. } => predictions,
+            PCNode::Memory { predictions, .. } => predictions,
         }
     }
 
@@ -433,7 +579,7 @@ impl PCN {
     }
 
     pub fn get_node_energy(&self, node_id: NodeId) -> f64 {
-        let index = self.nodes_map.get(&node_id).unwrap(); 
+        let index = self.nodes_map.get(&node_id).unwrap();
         self.graph.node_weight(*index).unwrap().energy()
     }
 
@@ -471,7 +617,11 @@ impl PCN {
         debug_assert_eq!(w.size(), values.len());
 
         match w {
-            PCNode::Memory { fix_memory, memory_pattern, .. } => {
+            PCNode::Memory {
+                fix_memory,
+                memory_pattern,
+                ..
+            } => {
                 memory_pattern.copy_from_slice(values);
                 *fix_memory = true;
             }
@@ -502,11 +652,8 @@ impl PCN {
 
         match w {
             PCNode::Sensor { mask, values, .. } => {
-                for i in 0..values.len() {
-                    mask[i] = new_mask[i];
-
-                    values[i] = new_values[i];
-                }
+                mask.copy_from_slice(new_mask);
+                values.copy_from_slice(new_values);
             }
             _ => panic!("Not a sensor node: {:?}", node_id),
         }
@@ -535,6 +682,12 @@ impl PCN {
         };
 
         w.set_to_random(amount, rng);
+    }
+
+    pub fn randomize_all_nodes(&mut self, amount: f64, rng: &mut impl Rng) {
+        for node_weight in self.graph.node_weights_mut() {
+            node_weight.set_to_random(amount, rng);
+        }
     }
 
     // #[allow(dead_code)]

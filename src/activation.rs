@@ -7,6 +7,7 @@ pub enum ActivationFn {
     ReLu,
     LeakyReLu(f64),
     SoftPlus,
+    Linear,
 }
 
 impl ActivationFn {
@@ -41,6 +42,9 @@ impl ActivationFn {
                     output[i] = (1. + input[i].exp()).ln();
                 }
             }
+            Linear => {
+                output.copy_from_slice(input);
+            }
         }
     }
 
@@ -57,7 +61,7 @@ impl ActivationFn {
             }
             Logistic => {
                 for i in 0..input.len() {
-                    output[i] *= 1. /  (1. + (-input[i]).exp());
+                    output[i] *= 1. / (1. + (-input[i]).exp());
                 }
             }
             ReLu => {
@@ -73,6 +77,11 @@ impl ActivationFn {
             SoftPlus => {
                 for i in 0..input.len() {
                     output[i] *= (1. + input[i].exp()).ln();
+                }
+            }
+            Linear => {
+                for i in 0..input.len() {
+                    output[i] *= input[i];
                 }
             }
         }
@@ -111,6 +120,9 @@ impl ActivationFn {
                     output[i] = 1. / (1. + (-input[i]).exp());
                 }
             }
+            Linear => {
+                output.fill(1.);
+            }
         }
     }
 
@@ -147,6 +159,7 @@ impl ActivationFn {
                     output[i] *= 1. / (1. + (-input[i]).exp());
                 }
             }
+            Linear => {} // no effect
         }
     }
 
@@ -163,7 +176,44 @@ impl ActivationFn {
                     output[i] = -2. * d * v;
                 }
             }
-            _ => unimplemented!("coming soon"),
+            _ => unimplemented!("coming soon? ever..?"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_tanh() {
+        let f = ActivationFn::Tanh;
+
+        let input = [1., -2., 0.];
+
+        let mut output = [0.; 3];
+
+        f.eval(&input, &mut output);
+        assert_eq!(output[0], 1.0_f64.tanh());
+        assert_eq!(output[1], (-2.0_f64).tanh());
+        assert_eq!(output[2], 0.0);
+
+        let mut output = [1., -1., 0.];
+        f.eval_mul(&input, &mut output);
+        assert_eq!(output[0], 1.0_f64.tanh());
+        assert_eq!(output[1], -1. * (-2.0_f64).tanh());
+        assert_eq!(output[2], 0.0);
+
+        let mut output = [1., -1., 0.];
+        f.diff(&input, &mut output);
+        assert_eq!(output[0], 1. - 1.0_f64.tanh() * 1.0_f64.tanh());
+        assert_eq!(output[1], 1. - (-2.0_f64).tanh() * (-2.0_f64).tanh());
+        assert_eq!(output[2], 1.);
+
+        let mut output = [1., -1., 0.];
+        f.diff_mul(&input, &mut output);
+        assert_eq!(output[0], 1. - 1.0_f64.tanh() * 1.0_f64.tanh());
+        assert_eq!(output[1], -1. + (-2.0_f64).tanh() * (-2.0_f64).tanh());
+        assert_eq!(output[2], 0.);
     }
 }
