@@ -1,5 +1,6 @@
 use crate::activation::ActivationFn;
 use crate::dmatrix::DMatrix;
+use crate::dvector::add_inplace;
 use crate::dvector::hadamard_inplace;
 use crate::spec::NodeId;
 use petgraph::graph::DefaultIx;
@@ -8,6 +9,8 @@ use petgraph::graph::NodeIndex;
 use petgraph::prelude::EdgeRef;
 use petgraph::Direction;
 use rand::Rng;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 
 pub(crate) enum PCNode {
@@ -161,7 +164,7 @@ impl PCNode {
                 for i in 0..errors.len() {
                     let err = values[i] - predictions[i];
                     err_sum_sqr += err * err;
-                    errors[i] = values[i] - predictions[i]; // TODO Sigma/variance - that thing
+                    errors[i] = err; // TODO Sigma/variance - that thing
                 }
             }
         }
@@ -233,11 +236,16 @@ impl PCNode {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum LearningRule {
     Hebbian,
     Oja,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct WeightMatrix {
+    pub matrix: DMatrix<f64>,
+    pub learning_rule: LearningRule,
 }
 
 #[derive(Clone)]
@@ -259,14 +267,14 @@ type NodeIdx = NodeIndex<DefaultIx>;
 pub struct PCN {
     graph: Graph<PCNode, PCEdge>,
     nodes_map: HashMap<NodeId, NodeIdx>,
-    matrices: Vec<DMatrix<f64>>,
+    matrices: Vec<WeightMatrix>,
 }
 
 impl PCN {
     pub(crate) fn new(
         graph: Graph<PCNode, PCEdge>,
         nodes_map: HashMap<NodeId, NodeIndex<DefaultIx>>,
-        matrices: Vec<DMatrix<f64>>,
+        matrices: Vec<WeightMatrix>,
     ) -> Self {
         Self {
             graph,
@@ -280,7 +288,7 @@ impl PCN {
     }
 
     fn edge_weight_matrix<'a>(&'a self, edge_weight: &PCEdge) -> &'a DMatrix<f64> {
-        &self.matrices[edge_weight.weight_matrix_index]
+        &self.matrices[edge_weight.weight_matrix_index].matrix
     }
 
     pub fn compute_predictions(&mut self) {
@@ -294,16 +302,6 @@ impl PCN {
 
                 self.edge_weight_matrix(edge.weight())
                     .mul_vec_add(self.graph.node_weight(n2).unwrap().values(), &mut acc);
-
-                /*
-                self.graph
-                    .node_weight(n2)
-                    .unwrap()
-                    .activation(&mut temp_vec);
-
-                self.edge_weight_matrix(edge.weight())
-                    .mul_vec_add(&temp_vec, &mut node_predictions);
-                    */
             }
 
             self.graph
@@ -316,12 +314,6 @@ impl PCN {
                 .node_weight_mut(node_index)
                 .unwrap()
                 .set_predictions(&node_predictions);
-            /*
-            self.graph
-                .node_weight_mut(node_index)
-                .unwrap()
-                .set_predictions(&node_predictions);
-                */
         }
     }
 
@@ -344,63 +336,35 @@ impl PCN {
                 let w2 = self.graph.node_weight(n2).unwrap();
                 let mut a = vec![0.; w2.size()];
                 self.edge_weight_matrix(edge.weight())
-                    .mul_vec(w.values(), &mut a);
+                    .mul_vec(w.values(), &mut a); // a = W x_source
                 let mut b = vec![0.; w2.size()];
-                w2.activation_fn().diff(&a, &mut b);
-                hadamard_inplace(w2.errors(), &mut b);
+                w2.activation_fn().diff(&a, &mut b); // b = f'(W x_source)
+                hadamard_inplace(w2.errors(), &mut b); // b = f'(W x_source) * e_target
                 self.edge_weight_matrix(edge.weight())
-                    .trans_mul_vec_add(&b, &mut acc);
+                    .trans_mul_vec_add(&b, &mut acc); // acc += W^T (f'(W x_source) * e_target)
             }
 
             let es = self.node_errors(&node_index);
             for (i, item) in acc.iter_mut().enumerate() {
-                *item -= es[i];
-                *item *= gamma;
+                *item -= es[i]; // acc = W^T (f'(a) * e_target) - e_source
+                *item *= gamma; // acc = gamma (W^T (f'(W x_source) * e_target) - e_source)
             }
 
             self.update_node_values(&node_index, &acc);
         }
-
-        /*
-        for node_index in self.graph.node_indices() {
-            let w = self.graph.node_weight_mut(node_index).unwrap();
-
-            let mut acc = vec![0.; w.size()];
-
-            for edge in self.graph.edges_directed(node_index, Direction::Outgoing) {
-                let n2 = edge.target();
-                self.edge_weight_matrix(edge.weight())
-                    .trans_mul_vec_add(self.node_errors(&n2), &mut acc);
-            }
-
-            self.graph
-                .node_weight(node_index)
-                .unwrap()
-                .activation_diff_mul(&mut acc);
-
-            let es = self.node_errors(&node_index);
-            for i in 0..acc.len() {
-                acc[i] -= es[i];
-                acc[i] *= gamma;
-            }
-
-            self.update_node_values(&node_index, &acc);
-        }
-        */
     }
 
     pub fn inference_step(&mut self, gamma: f64) -> f64 {
         self.compute_predictions();
         let err_sum_sqr = self.compute_errors();
-        // println!("inference step, energy: {}", err_sum_sqr);
         self.compute_values(gamma);
         err_sum_sqr
     }
 
     pub fn inference_steps(&mut self, gamma: f64, steps: usize) {
-        // println!("Doing {} inference steps", steps);
-        for _i in 0..steps {
-            self.inference_step(gamma);
+        for i in 0..steps {
+            let err = self.inference_step(gamma);
+            println!("step {i}, error={err}");
         }
     }
 
@@ -431,10 +395,7 @@ impl PCN {
     }
 
     pub fn learning_step(&mut self, alpha: f64) {
-        // println!("energy before learning {}", self.compute_total_energy());
-        // self.pp();
         for edge_index in self.graph.edge_indices() {
-            // TODO Oja's Rule to fix stability problem
             let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
             let source_node = self.graph.node_weight(source).unwrap();
             let target_node = self.graph.node_weight(target).unwrap();
@@ -446,78 +407,32 @@ impl PCN {
 
             let mut a = vec![0.; target_node.size()];
 
-            self.matrices[matrix_index].mul_vec(source_node.values(), &mut a);
+            self.matrices[matrix_index]
+                .matrix
+                .mul_vec(source_node.values(), &mut a);
+            // a = W x_source
 
             let mut b = vec![0.; target_node.size()];
-            target_node.activation_fn().diff(&a, &mut b);
-            hadamard_inplace(target_node.errors(), &mut b);
+            target_node.activation_fn().diff(&a, &mut b); // b = f'(W x_source)
+            hadamard_inplace(target_node.errors(), &mut b); // b = f'(W x_source) * e_target
 
-            let matrix = &mut self.matrices[matrix_index];
+            let matrix = &mut self.matrices[matrix_index].matrix;
             let values = &source_node.values();
 
+            // TODO select learning rule by matrix
             for r in 0..matrix.rows() {
                 for c in 0..matrix.cols() {
+                    // TODO - find the right version of Oja's rule to use.
+                    // line below or the other one
                     let delta = alpha * b[r] * (values[c] - b[r] * matrix[(r, c)]);
+                    // delta = alpha * (f'(W x_source) * e_target) (x_source - ...)
+                    // let delta = alpha * values[c] * (b[r] - values[c] * matrix[(r, c)]);
                     matrix[(r, c)] += delta;
                 }
             }
 
             // self.matrices[matrix_index].add_vecs_mul(alpha, &b, &source_node.values());
         }
-
-        /*
-        for edge_index in self.graph.edge_indices() {
-            let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
-
-            let errors = self.node_errors(&target);
-            let values_size = self.node_size(&source);
-            let mut temp_values = vec![0.; values_size];
-            let mut temp_errors = vec![0.; errors.len()];
-
-            self.graph
-                .node_weight(source)
-                .unwrap()
-                .activation(&mut temp_values);
-
-            temp_errors.copy_from_slice(errors);
-
-            let matrix_index = self
-                .graph
-                .edge_weight(edge_index)
-                .unwrap()
-                .weight_matrix_index;
-
-            let matrix = &mut self.matrices[matrix_index];
-
-            for r in 0..matrix.rows() {
-                for c in 0..matrix.cols() {
-                    // using Oja's rule w_i,j += alpha * y_i * (x_j - /Sum_k=1 w_k,j * y_k)
-                    let s = matrix.mul_col_vec(&temp_errors, c);
-                    let delta = alpha * temp_errors[r] * (temp_values[c] - s);
-                    matrix[(r, c)] += delta;
-
-                    // from PCN papers
-                    // let delta = alpha * temp_errors[r] * temp_values[c];
-                    // matrix[(r, c)] += delta;
-                }
-            }
-            // self.matrices[matrix_index].add_vecs_mul(alpha, &temp_errors, &temp_values);
-        }
-        */
-
-        /*
-        for node_index in self.graph.node_indices() {
-            if let Some(PCNode::Memory { values, errors, .. }) =
-                self.graph.node_weight_mut(node_index)
-            {
-                for i in 0..values.len() {
-                    values[i] -= alpha * errors[i];
-                }
-            }
-        }
-        */
-        // self.pp();
-        // println!("energy after learning {}", self.compute_total_energy());
     }
 
     pub fn get_node_values(&self, id: NodeId) -> &[f64] {
@@ -547,28 +462,10 @@ impl PCN {
                     }
                 }
             }
-            PCNode::Internal { values, .. } => {
-                for i in 0..values.len() {
-                    values[i] += delta[i];
-                }
-            }
-            PCNode::Memory { values, .. } => {
-                for i in 0..values.len() {
-                    values[i] += delta[i];
-                }
-            }
+            PCNode::Internal { values, .. } => add_inplace(delta, values),
+            PCNode::Memory { values, .. } => add_inplace(delta, values),
         }
     }
-
-    /*
-    fn node_values(&self, index: &NodeIdx) -> &[f64] {
-        match self.graph.node_weight(*index).unwrap() {
-            PCNode::Sensor { values, .. } => values,
-            PCNode::Internal { values, .. } => values,
-            PCNode::Memory { values, .. } => values,
-        }
-    }
-    */
 
     fn node_errors(&self, index: &NodeIdx) -> &[f64] {
         match self.graph.node_weight(*index).unwrap() {
@@ -589,26 +486,6 @@ impl PCN {
             .map(|node_weight| node_weight.energy())
             .sum()
     }
-
-    /*
-    pub fn set_sensor_predictions(&mut self, node_id: NodeId, new_values: &[f64], new_mask: &[bool]) {
-        let index = self.nodes_map.get(&node_id).unwrap();
-        let Some(w) = self.graph.node_weight_mut(*index) else {
-            panic!("Undefined node: {:?}", node_id);
-        };
-
-        debug_assert_eq!(w.size(), new_values.len());
-        debug_assert_eq!(new_values.len(), new_mask.len());
-
-        match w {
-            PCNode::Sensor { mask, predictions, .. } => {
-                mask.copy_from_slice(new_mask);
-                predictions.copy_from_slice(new_values);
-            }
-            _ => panic!("Node {:?} is not a sensor node", node_id),
-        }
-    }
-    */
 
     pub fn set_memory_values(&mut self, node_id: NodeId, values: &[f64]) {
         let index = self.nodes_map.get(&node_id).unwrap();
@@ -674,7 +551,6 @@ impl PCN {
         }
     }
 
-    // #[allow(dead_code)]
     pub fn randomize_node(&mut self, node_id: NodeId, amount: f64, rng: &mut impl Rng) {
         let index = self.nodes_map.get(&node_id).unwrap();
         let Some(w) = self.graph.node_weight_mut(*index) else {
@@ -690,7 +566,6 @@ impl PCN {
         }
     }
 
-    // #[allow(dead_code)]
     pub fn reset_node(&mut self, node_id: NodeId) {
         let index = self.nodes_map.get(&node_id).unwrap();
         self.graph.node_weight_mut(*index).unwrap().reset();
@@ -702,7 +577,6 @@ impl PCN {
         }
     }
 
-    // #[allow(dead_code)]
     pub fn pp(&self) {
         println!("# Nodes");
         for node_id in self.nodes_map.keys() {
@@ -725,7 +599,7 @@ impl PCN {
         println!("# Matrices");
         for (n, matrix) in self.matrices.iter().enumerate() {
             println!("Matrix {}:", n);
-            matrix.pp();
+            matrix.matrix.pp();
         }
         println!();
     }

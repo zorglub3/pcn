@@ -1,7 +1,9 @@
 use crate::activation::ActivationFn;
 use crate::dmatrix::DMatrix;
+use crate::pcn::LearningRule;
 use crate::pcn::PCEdge;
 use crate::pcn::PCNode;
+use crate::pcn::WeightMatrix;
 use crate::pcn::PCN;
 use petgraph::graph::Graph;
 use rand::Rng;
@@ -51,7 +53,7 @@ struct Edge {
 pub struct Spec {
     nodes: Vec<Node>,
     edges: Vec<Edge>,
-    matrices: Vec<DMatrix<f64>>,
+    matrices: Vec<WeightMatrix>,
 }
 
 impl Spec {
@@ -102,7 +104,12 @@ impl Spec {
     pub fn add_weight_matrix(&mut self, from_size: usize, to_size: usize) -> MatrixId {
         let index = self.matrices.len();
 
-        self.matrices.push(DMatrix::new(to_size, from_size, 0.));
+        let weight_matrix = WeightMatrix {
+            matrix: DMatrix::new(to_size, from_size, 0.),
+            learning_rule: LearningRule::Oja,
+        };
+
+        self.matrices.push(weight_matrix);
 
         MatrixId::new(index)
     }
@@ -122,7 +129,12 @@ impl Spec {
             }
         }
 
-        self.matrices.push(matrix);
+        let weight_matrix = WeightMatrix {
+            matrix,
+            learning_rule: LearningRule::Oja,
+        };
+
+        self.matrices.push(weight_matrix);
 
         MatrixId::new(index)
     }
@@ -140,7 +152,8 @@ impl Spec {
             panic!("add_edge: source node cannot be a sensor");
         }
 
-        if from_node.size != matrix_node.cols() || to_node.size != matrix_node.rows() {
+        if from_node.size != matrix_node.matrix.cols() || to_node.size != matrix_node.matrix.rows()
+        {
             panic!("add_ege_with_matrix: mimatched matrix size");
         }
 
@@ -178,19 +191,21 @@ impl Spec {
     pub fn randomize_matrix(&mut self, matrix_id: MatrixId, amount: f64, rng: &mut impl Rng) {
         debug_assert!(matrix_id.0 < self.matrices.len());
 
-        self.matrices[matrix_id.0].randomize(amount, rng);
+        self.matrices[matrix_id.0].matrix.randomize(amount, rng);
     }
 
     pub fn randomize_all_matrices(&mut self, amount: f64, rng: &mut impl Rng) {
-        for matrix in self.matrices.iter_mut() {
-            matrix.randomize(amount, rng);
+        for weight_matrix in self.matrices.iter_mut() {
+            weight_matrix.matrix.randomize(amount, rng);
         }
     }
 
     pub fn randomize_all_matrices_xavier(&mut self, rng: &mut impl Rng) {
-        for matrix in self.matrices.iter_mut() {
-            let amount = (6. / (matrix.rows() as f64 + matrix.cols() as f64)).sqrt();
-            matrix.randomize(amount, rng);
+        for weight_matrix in self.matrices.iter_mut() {
+            let amount = (6.
+                / (weight_matrix.matrix.rows() as f64 + weight_matrix.matrix.cols() as f64))
+                .sqrt();
+            weight_matrix.matrix.randomize(amount, rng);
         }
     }
 
