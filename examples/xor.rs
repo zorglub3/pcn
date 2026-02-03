@@ -5,19 +5,19 @@ use pcn::PCN;
 use rand::prelude::*;
 
 const SENSOR_SIZE: usize = 1;
-const INTERNAL_SIZE: usize = 8;
+const INTERNAL_SIZE: usize = 4;
 const MEMORY_SIZE: usize = 2;
-const INTERNAL_LAYER_COUNT: usize = 4;
+const INTERNAL_LAYER_COUNT: usize = 2;
 
 const GAMMA: f64 = 0.2;
 const ALPHA: f64 = 0.2;
 const INFERENCE_STEPS: usize = 16;
-const LEARNING_STEPS: usize = 1000;
+const LEARNING_STEPS: usize = 2000;
 // (INTERNAL_SIZE * INTERNAL_LAYER_COUNT + SENSOR_SIZE + MEMORY_SIZE) * 200;
 const TEST_TRIALS: usize = 20;
 
-const F64_TRUE: f64 = 0.5;
-const F64_FALSE: f64 = -0.5;
+const F64_TRUE: f64 = 0.95;
+const F64_FALSE: f64 = -0.95;
 
 const TEST_PATTERNS: [([bool; 2], [bool; 1]); 4] = [
     ([true, true], [false]),
@@ -57,11 +57,11 @@ fn test_it(memory: NodeId, sensor: NodeId, pcn: &mut PCN, rng: &mut impl Rng) ->
             pcn.reset_all_nodes();
             pcn.randomize_all_nodes(0.1, rng);
             pcn.set_memory_values(memory, &f64_input_pattern);
-            pcn.set_sensor_values(sensor, &[0.], &[false]);
+            // pcn.set_sensor_values(sensor, &[rng.random_range(-0.5 .. 0.5)], &[false]);
 
             pcn.inference_steps(GAMMA, INFERENCE_STEPS);
 
-            let output = pcn.get_node_values(sensor)[0].tanh();
+            let output = pcn.get_node_predictions(sensor)[0].tanh();
             let error = f64_output_pattern[0] - output;
             total_error += error * error;
 
@@ -99,6 +99,7 @@ fn main() {
     let initial_error = test_it(memory, sensor, &mut xor, &mut rng);
 
     println!("# Pre learning test error: {}", initial_error);
+    println!("=========================");
 
     let mask = vec![true; SENSOR_SIZE];
 
@@ -142,6 +143,7 @@ fn main() {
         }
     }
     println!("learned {} samples. done.", LEARNING_STEPS);
+    println!("=========================");
 
     let final_error = test_it(memory, sensor, &mut xor, &mut rng);
     println!("# Post learning testing error: {}", final_error);

@@ -13,6 +13,26 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 
+// TODO bugfix - support multiple connections to-/from- nodes
+// Check how this affects predictions, value propagation and learning step
+//
+// TODO refactor to
+/*
+pub(crate) struct PCNode {
+    activation_fn: ActivationFn,
+    values: Vec<f64>,
+    predictions: Vec<f64>,
+    errors: Vec<f64>,
+    mask: bool,
+}
+
+pub(crate) enum PCNodeKind {
+    Internal,
+    Sensor,
+    Memory,
+}
+*/
+
 pub(crate) enum PCNode {
     Internal {
         activation_fn: ActivationFn,
@@ -38,6 +58,14 @@ pub(crate) enum PCNode {
 }
 
 impl PCNode {
+    fn kind_str(&self) -> &'static str {
+        match self {
+            PCNode::Internal { .. } => "internal",
+            PCNode::Sensor { .. } => "sensor",
+            PCNode::Memory { .. } => "memory",
+        }
+    }
+
     fn activation_fn(&self) -> &ActivationFn {
         match self {
             PCNode::Internal { activation_fn, .. } => activation_fn,
@@ -51,6 +79,14 @@ impl PCNode {
             PCNode::Internal { values, .. } => values,
             PCNode::Sensor { values, .. } => values,
             PCNode::Memory { values, .. } => values,
+        }
+    }
+
+    fn predictions(&self) -> &[f64] {
+        match self {
+            PCNode::Internal { predictions, .. } => predictions,
+            PCNode::Sensor { predictions, .. } => predictions,
+            PCNode::Memory { predictions, .. } => predictions,
         }
     }
 
@@ -362,9 +398,10 @@ impl PCN {
     }
 
     pub fn inference_steps(&mut self, gamma: f64, steps: usize) {
-        for i in 0..steps {
-            let err = self.inference_step(gamma);
-            println!("step {i}, error={err}");
+        for _i in 0..steps {
+            let _err = self.inference_step(gamma);
+            // println!("step {_i}, error={_err}");
+            // self.pp();
         }
     }
 
@@ -424,9 +461,9 @@ impl PCN {
                 for c in 0..matrix.cols() {
                     // TODO - find the right version of Oja's rule to use.
                     // line below or the other one
-                    let delta = alpha * b[r] * (values[c] - b[r] * matrix[(r, c)]);
+                    // let delta = alpha * b[r] * (values[c] - b[r] * matrix[(r, c)]);
                     // delta = alpha * (f'(W x_source) * e_target) (x_source - ...)
-                    // let delta = alpha * values[c] * (b[r] - values[c] * matrix[(r, c)]);
+                    let delta = alpha * values[c] * (b[r] - values[c] * matrix[(r, c)]);
                     matrix[(r, c)] += delta;
                 }
             }
@@ -583,12 +620,15 @@ impl PCN {
             let node_index = self.nodes_map.get(node_id).unwrap();
             let node_data = self.graph.node_weight(*node_index).unwrap();
             println!("- Node {:?}:", &node_id);
+            println!("  + type  : {}", node_data.kind_str());
             println!("  + values: {:?}", node_data.values());
             println!("  + errors: {:?}", node_data.errors());
+            println!("  + predictions: {:?}", node_data.predictions());
             println!("  + energy: {:?}", node_data.energy());
         }
         println!();
 
+        /*
         println!("# Edges");
         for edge_weight in self.graph.edge_weights() {
             println!("- Edge:");
@@ -602,5 +642,6 @@ impl PCN {
             matrix.matrix.pp();
         }
         println!();
+        */
     }
 }
