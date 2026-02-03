@@ -5,12 +5,12 @@ use pcn::PCN;
 use rand::prelude::*;
 
 const SENSOR_SIZE: usize = 1;
-const INTERNAL_SIZE: usize = 4;
+const INTERNAL_SIZE: usize = 8;
 const MEMORY_SIZE: usize = 2;
-const INTERNAL_LAYER_COUNT: usize = 2;
+const INTERNAL_LAYER_COUNT: usize = 1;
 
 const GAMMA: f64 = 0.2;
-const ALPHA: f64 = 0.2;
+const ALPHA: f64 = 0.3;
 const INFERENCE_STEPS: usize = 16;
 const LEARNING_STEPS: usize = 2000;
 // (INTERNAL_SIZE * INTERNAL_LAYER_COUNT + SENSOR_SIZE + MEMORY_SIZE) * 200;
@@ -56,16 +56,16 @@ fn test_it(memory: NodeId, sensor: NodeId, pcn: &mut PCN, rng: &mut impl Rng) ->
 
             pcn.reset_all_nodes();
             pcn.randomize_all_nodes(0.1, rng);
-            pcn.set_memory_values(memory, &f64_input_pattern);
+            pcn.fix_node_values(memory, &f64_input_pattern);
             // pcn.set_sensor_values(sensor, &[rng.random_range(-0.5 .. 0.5)], &[false]);
 
             pcn.inference_steps(GAMMA, INFERENCE_STEPS);
 
-            let output = pcn.get_node_predictions(sensor)[0].tanh();
+            let output = pcn.node_predictions(sensor)[0].tanh();
             let error = f64_output_pattern[0] - output;
             total_error += error * error;
 
-            // println!(" - {:?} => {:?}", &f64_input_pattern, output);
+            println!(" - {:?} => {:?}", &f64_input_pattern, output);
             // println!(" - error: {}", error);
         }
     }
@@ -78,12 +78,12 @@ fn main() {
     let mut rng = rand::rng();
 
     let mut spec = Spec::default();
-    let sensor = spec.add_sensor_node(SENSOR_SIZE, ActivationFn::Tanh);
-    let memory = spec.add_output_node(MEMORY_SIZE, ActivationFn::Tanh);
+    let sensor = spec.add_node(SENSOR_SIZE, ActivationFn::Tanh);
+    let memory = spec.add_node(MEMORY_SIZE, ActivationFn::Tanh);
 
     let mut hidden_layers = Vec::new();
     for _i in 0..INTERNAL_LAYER_COUNT {
-        hidden_layers.push(spec.add_internal_node(INTERNAL_SIZE, ActivationFn::Tanh));
+        hidden_layers.push(spec.add_node(INTERNAL_SIZE, ActivationFn::Tanh));
     }
 
     for i in 0..INTERNAL_LAYER_COUNT - 1 {
@@ -101,7 +101,7 @@ fn main() {
     println!("# Pre learning test error: {}", initial_error);
     println!("=========================");
 
-    let mask = vec![true; SENSOR_SIZE];
+    // let mask = vec![true; SENSOR_SIZE];
 
     let mut count = 0;
     let mut error_acc = 0.;
@@ -120,15 +120,15 @@ fn main() {
         // xor.inference_steps(GAMMA, INFERENCE_STEPS);
         // xor.pp();
 
-        xor.set_memory_values(memory, &f64_input_pattern);
-        xor.set_sensor_values(sensor, &f64_output_pattern, &mask);
+        xor.fix_node_values(memory, &f64_input_pattern);
+        xor.fix_node_values(sensor, &f64_output_pattern);
 
         // xor.infer_and_learn(GAMMA, ALPHA, INFERENCE_STEPS);
         xor.inference_steps(GAMMA, INFERENCE_STEPS);
         xor.learning_step(ALPHA);
         // xor.pp();
 
-        error_acc += xor.get_total_energy();
+        error_acc += xor.compute_total_energy();
         count += 1;
 
         if i % 200 == 0 && count > 0 {

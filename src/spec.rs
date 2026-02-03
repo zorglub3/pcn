@@ -28,18 +28,13 @@ impl MatrixId {
         Self(index)
     }
 }
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
-pub enum NodeMode {
-    Sensor,
-    Output,
-    Hidden,
-}
 
+// TODO add tags
 #[derive(Serialize, Deserialize)]
 struct Node {
     function: ActivationFn,
-    mode: NodeMode,
     size: usize,
+    tags: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -69,36 +64,16 @@ impl Spec {
         self.matrices.len()
     }
 
-    fn add_node(&mut self, node: Node) -> NodeId {
+    pub fn add_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
         let index = self.nodes.len();
 
-        self.nodes.push(node);
+        self.nodes.push(Node {
+            function,
+            size,
+            tags: Vec::new(),
+        });
 
         NodeId::new(index)
-    }
-
-    pub fn add_sensor_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
-        self.add_node(Node {
-            function,
-            mode: NodeMode::Sensor,
-            size,
-        })
-    }
-
-    pub fn add_output_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
-        self.add_node(Node {
-            function,
-            mode: NodeMode::Output,
-            size,
-        })
-    }
-
-    pub fn add_internal_node(&mut self, size: usize, function: ActivationFn) -> NodeId {
-        self.add_node(Node {
-            function,
-            mode: NodeMode::Hidden,
-            size,
-        })
     }
 
     pub fn add_weight_matrix(&mut self, from_size: usize, to_size: usize) -> MatrixId {
@@ -148,10 +123,6 @@ impl Spec {
         let to_node = &self.nodes[to.0];
         let matrix_node = &self.matrices[matrix_id.0];
 
-        if from_node.mode == NodeMode::Sensor {
-            panic!("add_edge: source node cannot be a sensor");
-        }
-
         if from_node.size != matrix_node.matrix.cols() || to_node.size != matrix_node.matrix.rows()
         {
             panic!("add_ege_with_matrix: mimatched matrix size");
@@ -172,10 +143,6 @@ impl Spec {
 
         let from_node = &self.nodes[from.0];
         let to_node = &self.nodes[to.0];
-
-        if from_node.mode == NodeMode::Sensor {
-            panic!("add_edge: source node cannot be a sensor");
-        }
 
         let matrix_id = self.add_weight_matrix(from_node.size, to_node.size);
 
@@ -217,11 +184,7 @@ impl Spec {
         for index in 0..self.nodes.len() {
             let node_id = NodeId(index);
             let node = &self.nodes[index];
-            let graph_node = match node.mode {
-                NodeMode::Sensor => PCNode::new_sensor(node.size, node.function),
-                NodeMode::Hidden => PCNode::new_internal(node.size, node.function),
-                NodeMode::Output => PCNode::new_memory(node.size, node.function),
-            };
+            let graph_node = PCNode::new(node.function, node.size, &[]);
 
             let node_index = graph.add_node(graph_node);
 
