@@ -2,7 +2,6 @@ use crate::activation::ActivationFn;
 use crate::dmatrix::DMatrix;
 use crate::dvector::randomize_vec;
 use crate::dvector::scale_add_inplace;
-use crate::dvector::sub_inplace;
 use rand::Rng;
 use std::collections::BTreeMap;
 
@@ -39,12 +38,7 @@ impl<NodeId: Eq + Ord + Clone> Default for PCN<NodeId> {
 }
 
 impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
-    pub fn add_node(
-        &mut self, 
-        id: &NodeId,
-        activation_function: ActivationFn, 
-        size: usize,
-    ) {
+    pub fn add_node(&mut self, id: &NodeId, activation_function: ActivationFn, size: usize) {
         debug_assert!(!self.nodes_map.contains_key(&id));
 
         let node_index = self.next_node_index;
@@ -54,17 +48,15 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
         self.node_values.push(NodeValues::new(size));
         self.node_value_updates.push(NodeValueUpdate::new(size));
         self.node_predictions.push(NodePredictions::new(size));
+        self.node_prediction_diffs
+            .push(NodePredictionDiffs::new(size));
         self.node_errors.push(NodeErrors::new(size));
         self.node_sizes.push(size);
 
         self.nodes_map.insert(id.clone(), node_index);
     }
 
-    pub fn add_edge(
-        &mut self, 
-        target_id: &NodeId,
-        source_id: &NodeId, 
-    ) {
+    pub fn add_edge(&mut self, target_id: &NodeId, source_id: &NodeId) {
         debug_assert!(self.nodes_map.contains_key(source_id));
         debug_assert!(self.nodes_map.contains_key(target_id));
 
@@ -78,7 +70,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
 
         self.weight_matrices.push(weight_matrix);
         self.edges
-            .push(Edge::new(*source, *target, weight_matrix_index, target_size));
+            .push(Edge::new(*source, *target, weight_matrix_index));
     }
 
     pub fn randomize_weights<R: Rng>(&mut self, rng: &mut R) {
@@ -117,6 +109,17 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
         }
 
         error_square_sum
+    }
+
+    pub fn inference_steps(&mut self, gamma: f64, n: usize) -> f64 {
+        let mut err = 0.;
+
+        for _i in 0..n {
+            self.compute_predictions();
+            err = self.compute_errors();
+            self.compute_values(gamma);
+        }
+        err
     }
 
     pub fn compute_predictions(&mut self) {
@@ -158,24 +161,34 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     pub fn compute_values(&mut self, gamma: f64) {
         self.compute_prediction_diffs();
 
-        for u in self.node_value_updates.iter_mut() {
-            u.0.fill(0.);
+        for (e, u) in self
+            .node_errors
+            .iter()
+            .zip(self.node_value_updates.iter_mut())
+        {
+            for (ep, up) in e.0.as_ref().iter().zip(u.0.as_mut().iter_mut()) {
+                *up = -ep;
+            }
         }
 
         for edge in self.edges.iter() {
             let w = &self.weight_matrices[edge.weight_matrix];
-            let pd = &self.node_prediction_diffs[edge.target];
-            let e = &self.node_errors[edge.target];
+            let pd = self.node_prediction_diffs[edge.target].0.as_ref();
+            let e = self.node_errors[edge.target].0.as_ref();
+            let nvu = self.node_value_updates[edge.source].0.as_mut();
 
-            // TODO compute w^T (pd * e) and add it to node_value_updates
-            //  Coult be that last part (adding it to nvu) is done in sep step
+            for (i, u) in nvu.iter_mut().enumerate() {
+                for (j, (p, ee)) in pd.iter().zip(e.iter()).enumerate() {
+                    *u += w[(i, j)] * p * ee;
+                }
+            }
         }
 
-        for (e, u) in self.node_errors.iter().zip(self.node_value_updates.iter_mut()) {
-            sub_inplace(&e.0, &mut u.0);
-        }
-
-        for (v, u) in self.node_values.iter_mut().zip(self.node_value_updates.iter()) {
+        for (v, u) in self
+            .node_values
+            .iter_mut()
+            .zip(self.node_value_updates.iter())
+        {
             scale_add_inplace(gamma, &u.0, &mut v.0);
         }
     }
@@ -197,13 +210,51 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
         }
     }
 
-    pub fn learn_oja(&mut self, alpha: f64) {
+    pub fn learn_oja(&mut self, _alpha: f64) {
         todo!()
+    }
+
+    pub fn set_values(&mut self, node_id: &NodeId, values: &[f64]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_values[*node_index]
+            .0
+            .as_mut()
+            .copy_from_slice(values);
+    }
+
+    pub fn set_values_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        let iter = self.node_values[*node_index].0.as_mut().iter_mut();
+
+        for (i, v) in values.iter().zip(iter) {
+            *v = if *i { 1. } else { -1. };
+        }
+    }
+
+    pub fn set_predictions(&mut self, node_id: &NodeId, values: &[f64]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_predictions[*node_index]
+            .0
+            .as_mut()
+            .copy_from_slice(values);
+    }
+
+    pub fn set_predictions_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        let iter = self.node_predictions[*node_index].0.as_mut().iter_mut();
+
+        for (i, v) in values.iter().zip(iter) {
+            *v = if *i { 1. } else { -1. };
+        }
+    }
+
+    pub fn node_values(&self, node_id: &NodeId) -> &[f64] {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_values[*node_index].0.as_ref()
     }
 }
 
 type NodeIndex = usize;
-type EdgeIndex = usize;
 
 struct NodeValueUpdate(Box<[f64]>);
 
@@ -249,16 +300,14 @@ struct Edge {
     source: NodeIndex,
     target: NodeIndex,
     weight_matrix: usize,
-    gain_modulated_error: Box<[f64]>,
 }
 
 impl Edge {
-    fn new(source: NodeIndex, target: NodeIndex, weight_matrix: usize, target_size: usize) -> Self {
+    fn new(source: NodeIndex, target: NodeIndex, weight_matrix: usize) -> Self {
         Self {
             source,
             target,
             weight_matrix,
-            gain_modulated_error: vec![0.; target_size].into_boxed_slice(),
         }
     }
 }

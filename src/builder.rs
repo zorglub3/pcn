@@ -48,8 +48,8 @@ impl<NodeId: Eq + Ord + Clone> Builder<NodeId> {
     }
 
     pub fn add_edge(mut self, source: NodeId, target: NodeId) -> Self {
-        debug_assert!(!self.has_node(&source));
-        debug_assert!(!self.has_node(&target));
+        debug_assert!(self.has_node(&source));
+        debug_assert!(self.has_node(&target));
 
         let edge_spec = EdgeSpec { source, target };
         debug_assert!(!self.edges.contains(&edge_spec));
