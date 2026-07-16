@@ -13,17 +13,37 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 
+// TODO refactor/fix THE PROBLEM that it doesn't learn...
+// sensor node vs the other kinds of nodes ("memory nodes").
+// How errors and predictions are interpreted...
+//
 // TODO bugfix - support multiple connections to-/from- nodes
 // Check how this affects predictions, value propagation and learning step
 //
+// TODO use boxed slices?
+//
+// TODO lookup node by tag
+//
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum NodeRole {
+    Hidden,
+    Sensor,
+    Memory,
+}
+
+impl Default for NodeRole {
+    fn default() -> Self {
+        Self::Hidden
+    }
+}
 
 pub struct PCNode {
     activation_fn: ActivationFn,
-    // TODO change to boxed slice
     values: Vec<f64>,
     predictions: Vec<f64>,
     errors: Vec<f64>,
-    fix_values: bool,
+    role: NodeRole,
+    #[allow(unused)]
     tags: Vec<String>,
 }
 
@@ -33,6 +53,7 @@ impl PCNode {
         let predictions = vec![0.; size];
         let errors = vec![0.; size];
         let mut tags = Vec::new();
+        let role = NodeRole::default();
 
         for str_tag in str_tags {
             tags.push(str_tag.to_string());
@@ -43,7 +64,7 @@ impl PCNode {
             values,
             predictions,
             errors,
-            fix_values: false,
+            role,
             tags,
         }
     }
@@ -75,30 +96,55 @@ impl PCNode {
 
     #[inline]
     pub fn set_values(&mut self, new_values: &[f64]) {
-        if !self.fix_values {
-            self.values.copy_from_slice(new_values);
+        use NodeRole::*;
+
+        match self.role {
+            Sensor | Memory => { /* do nothing */ }
+            _ => self.values.copy_from_slice(new_values),
         }
     }
 
     #[inline]
     pub fn update_values(&mut self, delta: &[f64]) {
-        if !self.fix_values {
-            add_inplace(delta, &mut self.values);
+        use NodeRole::*;
+
+        match self.role {
+            Sensor | Memory => { /* do nothing*/ }
+            _ => add_inplace(delta, &mut self.values),
         }
     }
 
     #[inline]
     pub fn set_predictions(&mut self, new_predictions: &[f64]) {
-        self.predictions.copy_from_slice(new_predictions);
+        use NodeRole::*;
+
+        match self.role {
+            Memory => { /* do nothing */ }
+            _ => self.predictions.copy_from_slice(new_predictions),
+        }
+    }
+
+    #[inline]
+    pub fn energy(&self) -> f64 {
+        self.errors.iter().map(|error| error * error).sum()
     }
 
     #[inline]
     pub fn compute_errors(&mut self) -> f64 {
         let mut error_square_sum = 0.;
 
-        for i in 0..self.size() {
-            let err = self.values[i] - self.predictions[i];
-            self.errors[i] = err;
+        for ((e, v), p) in self
+            .errors
+            .iter_mut()
+            .zip(&self.values)
+            .zip(&self.predictions)
+        {
+            let err = if let NodeRole::Sensor = self.role {
+                v - p
+            } else {
+                v - p
+            };
+            *e = err;
             error_square_sum += err * err;
         }
 
@@ -110,9 +156,19 @@ impl PCNode {
     pub fn compute_errors_with_variance(&mut self, sigma: f64) -> f64 {
         let mut error_square_sum = 0.;
 
-        for i in 0..self.size() {
-            let err = (self.values[i] - self.predictions[i]) / sigma;
-            self.errors[i] = err;
+        for ((e, v), p) in self
+            .errors
+            .iter_mut()
+            .zip(&self.values)
+            .zip(&self.predictions)
+        {
+            let err = if let NodeRole::Sensor = self.role {
+                (v - p) / sigma
+            } else {
+                (v - p) / sigma
+            };
+
+            *e = err;
             error_square_sum += err * err;
         }
 
@@ -121,22 +177,35 @@ impl PCNode {
 
     #[inline]
     pub fn reset(&mut self) {
-        self.values.fill(0.);
-        self.errors.fill(0.);
-        self.predictions.fill(0.);
-        self.fix_values = false;
+        if !matches!(self.role, NodeRole::Memory) {
+            self.values.fill(0.);
+            self.errors.fill(0.);
+            self.predictions.fill(0.);
+        }
     }
 
     #[inline]
-    pub fn fix_values(&mut self, new_values: &[f64]) {
+    pub fn fix_values(&mut self, new_values: &[f64], role: NodeRole) {
+        use NodeRole::*;
+
+        if let Memory = role {
+            self.predictions.copy_from_slice(new_values);
+        }
+
         self.values.copy_from_slice(new_values);
-        self.fix_values = true;
+        self.role = role;
+    }
+
+    #[inline]
+    pub fn set_role(&mut self, role: NodeRole) {
+        self.role = role;
     }
 
     #[inline]
     pub fn randomize_values(&mut self, amount: f64, rng: &mut impl Rng) {
-        self.fix_values = false;
-        self.values.fill_with(|| rng.random_range(-amount..amount));
+        if !matches!(self.role, NodeRole::Memory) {
+            self.values.fill_with(|| rng.random_range(-amount..amount));
+        }
     }
 }
 
@@ -196,6 +265,8 @@ impl PCN {
     }
 
     pub fn compute_predictions(&mut self) {
+        // TODO no need for local buffer 'node_predictions'. Can ask for mutable refererence
+        //  to the actual buffer when evaluating the activation function.
         for node_index in self.graph.node_indices() {
             let node_size = self.node_size(&node_index);
             let mut node_predictions = vec![0.; node_size];
@@ -230,6 +301,12 @@ impl PCN {
     }
 
     pub fn compute_values(&mut self, gamma: f64) {
+        // TODO use inplace_diff function (not implemented yet) to evaluate
+        //  activation function diff. This gets rid of one local buffer.
+        // TODO FIX THE BUG!!! This is actually kind of async update. All updates should
+        //  be computed first - for _all_ nodes, and only _after_ that should the updates
+        //  be applied.
+
         for node_index in self.graph.node_indices() {
             let w = self.graph.node_weight(node_index).unwrap();
 
@@ -239,11 +316,15 @@ impl PCN {
                 let n2 = edge.target();
                 let w2 = self.graph.node_weight(n2).unwrap();
                 let mut a = vec![0.; w2.size()];
+
                 self.edge_weight_matrix(edge.weight())
                     .mul_vec(w.values(), &mut a); // a = W x_source
+
                 let mut b = vec![0.; w2.size()];
                 w2.activation().diff(&a, &mut b); // b = f'(W x_source)
+
                 hadamard_inplace(w2.errors(), &mut b); // b = f'(W x_source) * e_target
+
                 self.edge_weight_matrix(edge.weight())
                     .trans_mul_vec_add(&b, &mut acc); // acc += W^T (f'(W x_source) * e_target)
             }
@@ -266,6 +347,7 @@ impl PCN {
     }
 
     pub fn inference_steps(&mut self, gamma: f64, steps: usize) {
+        // println!("doing {} inference steps", steps);
         for _i in 0..steps {
             let _err = self.inference_step(gamma);
             // println!("step {_i}, error={_err}");
@@ -347,11 +429,11 @@ impl PCN {
             .set_values(new_values);
     }
 
-    pub fn fix_node_values(&mut self, id: NodeId, new_values: &[f64]) {
+    pub fn fix_node_values(&mut self, id: NodeId, new_values: &[f64], role: NodeRole) {
         self.graph
             .node_weight_mut(*self.nodes_map.get(&id).unwrap())
             .unwrap()
-            .fix_values(new_values);
+            .fix_values(new_values, role);
     }
 
     fn update_node_values(&mut self, index: &NodeIdx, delta: &[f64]) {
@@ -363,6 +445,13 @@ impl PCN {
 
     fn node_errors(&self, index: &NodeIdx) -> &[f64] {
         self.graph.node_weight(*index).unwrap().errors()
+    }
+
+    pub fn set_node_role(&mut self, id: NodeId, role: NodeRole) {
+        self.graph
+            .node_weight_mut(*self.nodes_map.get(&id).unwrap())
+            .unwrap()
+            .set_role(role);
     }
 
     pub fn randomize_all_nodes(&mut self, amount: f64, rng: &mut impl Rng) {
@@ -379,36 +468,37 @@ impl PCN {
         }
     }
 
-    /*
-        pub fn pp(&self) {
-            println!("# Nodes");
-            for node_id in self.nodes_map.keys() {
-                let node_index = self.nodes_map.get(node_id).unwrap();
-                let node_data = self.graph.node_weight(*node_index).unwrap();
-                println!("- Node {:?}:", &node_id);
-                println!("  + type  : {}", node_data.kind_str());
-                println!("  + values: {:?}", node_data.values());
-                println!("  + errors: {:?}", node_data.errors());
-                println!("  + predictions: {:?}", node_data.predictions());
-                println!("  + energy: {:?}", node_data.energy());
-            }
-            println!();
-
-            /*
-            println!("# Edges");
-            for edge_weight in self.graph.edge_weights() {
-                println!("- Edge:");
-                println!("  + weight matrix: {:?}", edge_weight.weight_matrix_index);
-            }
-            println!();
-
-            println!("# Matrices");
-            for (n, matrix) in self.matrices.iter().enumerate() {
-                println!("Matrix {}:", n);
-                matrix.matrix.pp();
-            }
-            println!();
-            */
+    pub fn pp(&self) {
+        println!("# Nodes");
+        for node_id in self.nodes_map.keys() {
+            let node_index = self.nodes_map.get(node_id).unwrap();
+            let node_data = self.graph.node_weight(*node_index).unwrap();
+            println!("- Node {:?}:", &node_id);
+            println!("  + values: {:?}", node_data.values());
+            println!("  + errors: {:?}", node_data.errors());
+            println!("  + predictions: {:?}", node_data.predictions());
+            println!("  + energy: {:?}", node_data.energy());
+            println!("  + tags: {:?}", node_data.tags);
         }
-    */
+        println!();
+
+        println!("# Edges");
+        for edge_index in self.graph.edge_indices() {
+            let weight = self.graph.edge_weight(edge_index).unwrap();
+            let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
+
+            println!("- Edge:");
+            println!("  + from node: {:?}", source);
+            println!("  + to node: {:?}", target);
+            println!("  + weight matrix: {:?}", weight.weight_matrix_index);
+        }
+        println!();
+
+        println!("# Matrices");
+        for (n, matrix) in self.matrices.iter().enumerate() {
+            println!("Matrix {}:", n);
+            matrix.matrix.pp();
+        }
+        println!();
+    }
 }

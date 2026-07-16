@@ -29,7 +29,6 @@ impl MatrixId {
     }
 }
 
-// TODO add tags
 #[derive(Serialize, Deserialize)]
 struct Node {
     function: ActivationFn,
@@ -71,6 +70,24 @@ impl Spec {
             function,
             size,
             tags: Vec::new(),
+        });
+
+        NodeId::new(index)
+    }
+
+    pub fn add_node_with_tags(
+        &mut self,
+        size: usize,
+        function: ActivationFn,
+        tags: &[&str],
+    ) -> NodeId {
+        let tags = tags.iter().map(|t| t.to_string()).collect();
+        let index = self.nodes.len();
+
+        self.nodes.push(Node {
+            function,
+            size,
+            tags,
         });
 
         NodeId::new(index)
@@ -184,7 +201,11 @@ impl Spec {
         for index in 0..self.nodes.len() {
             let node_id = NodeId(index);
             let node = &self.nodes[index];
-            let graph_node = PCNode::new(node.function, node.size, &[]);
+            let graph_node = PCNode::new(
+                node.function,
+                node.size,
+                &node.tags.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            );
 
             let node_index = graph.add_node(graph_node);
 

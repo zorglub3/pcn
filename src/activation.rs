@@ -48,6 +48,19 @@ impl ActivationFn {
         }
     }
 
+    pub fn eval_inplace(&self, values: &mut [f64]) {
+        use ActivationFn::*;
+
+        match self {
+            Tanh => {
+                for v in values {
+                    *v = v.tanh();
+                }
+            }
+            _ => todo!(),
+        }
+    }
+
     pub fn eval_mul(&self, input: &[f64], output: &mut [f64]) {
         debug_assert_eq!(input.len(), output.len());
 
@@ -125,6 +138,21 @@ impl ActivationFn {
             }
         }
     }
+
+    pub fn diff_inplace(&self, values: &mut[f64]) {
+        use ActivationFn::*;
+
+        match self {
+            Tanh => {
+                for value in values {
+                    let v = value.tanh();
+                    *value = 1. - v * v;
+                }
+            }
+            _ => todo!(),
+        }
+    }
+
 
     pub fn diff_mul(&self, input: &[f64], output: &mut [f64]) {
         debug_assert_eq!(input.len(), output.len());

@@ -1,3 +1,5 @@
+//! Dense vector functions for slices of f64 values
+
 #[inline]
 pub fn hadamard_inplace(a: &[f64], b: &mut [f64]) {
     debug_assert_eq!(a.len(), b.len());

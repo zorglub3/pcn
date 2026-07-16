@@ -1,7 +1,7 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::ops::{AddAssign, Index, IndexMut, Mul};
+use std::ops::{AddAssign, Index, IndexMut, Mul, Range};
 
 /// A Dense matrix with data stored row-wise
 #[derive(Serialize, Deserialize, Clone)]
@@ -30,9 +30,19 @@ impl<T> DMatrix<T> {
         self.rows
     }
 
+    /// Get an iterator over the rows
+    pub fn rows_range(&self) -> Range<usize> {
+        0..self.rows
+    }
+
     /// Get the number of columns for the matrix
     pub fn cols(&self) -> usize {
         self.cols
+    }
+
+    /// Get an iterator (a range really) over columns in the matrix
+    pub fn cols_range(&self) -> Range<usize> {
+        0..self.cols
     }
 
     /// Compute the index in the data block for some row and column
