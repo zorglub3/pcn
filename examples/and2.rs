@@ -11,7 +11,7 @@ const GATE_OUTPUT_SIZE: usize = 1;
 const GAMMA: f64 = 0.3;
 const INFERENCE_STEPS: usize = 8;
 const ALPHA: f64 = 0.3;
-const LEARNING_STEPS: usize = 1000;
+const LEARNING_STEPS: usize = 2;
 
 const INPUT_NODE: usize = 0;
 const OUTPUT_NODE: usize = 1;
@@ -29,6 +29,7 @@ type MyPCN = PCN<NodeId>;
 fn test_it(gate_input: &NodeId, gate_output: &NodeId, pcn: &mut MyPCN) -> f64 {
     let mut total_error = 0.;
 
+    println!("test it!");
     for (input, output) in TEST_PATTERNS {
         pcn.set_values_from_bool(gate_input, &input);
 
@@ -37,7 +38,10 @@ fn test_it(gate_input: &NodeId, gate_output: &NodeId, pcn: &mut MyPCN) -> f64 {
         let output_pattern = bool_to_f64(&output);
         let err = square_error(&output_pattern, pcn.node_values(gate_output));
         total_error += err;
+        println!(" {:?} => {:?}", &input, pcn.node_values(gate_output));
     }
+
+    println!("testing done with error={}", total_error);
 
     total_error
 }

@@ -1,3 +1,7 @@
+//! Implementation fo Predictive Coding Network. Loosely based on 
+//! "Introduction to Predictive Coding Networks for Machine Learning" 
+//! by Mikko Stenlund.
+
 use crate::activation::ActivationFn;
 use crate::dmatrix::DMatrix;
 use crate::dvector::randomize_vec;
@@ -177,18 +181,20 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             let e = self.node_errors[edge.target].0.as_ref();
             let nvu = self.node_value_updates[edge.source].0.as_mut();
 
-            for (i, u) in nvu.iter_mut().enumerate() {
-                for (j, (p, ee)) in pd.iter().zip(e.iter()).enumerate() {
+            for (j, u) in nvu.iter_mut().enumerate() {
+                for (i, (p, ee)) in pd.iter().zip(e.iter()).enumerate() {
                     *u += w[(i, j)] * p * ee;
                 }
             }
         }
 
+        // println!("Doing updates");
         for (v, u) in self
             .node_values
             .iter_mut()
             .zip(self.node_value_updates.iter())
         {
+            // println!(" {:?} += {} * {:?}", &v.0, gamma, &u.0);
             scale_add_inplace(gamma, &u.0, &mut v.0);
         }
     }
@@ -202,8 +208,10 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             let e = &self.node_errors[edge.target].0.as_ref();
             let x = &self.node_values[edge.source].0.as_ref();
 
+            // println!("updating weights in edge");
             for r in w.rows_range() {
                 for c in w.cols_range() {
+                    // println!(" w[({}, {}] += {} * {} * {} * {}", r, c, alpha, h[r], e[r], x[c]);
                     w[(r, c)] += alpha * h[r] * e[r] * x[c];
                 }
             }
