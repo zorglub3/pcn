@@ -17,6 +17,7 @@ pub struct PCN<NodeId: Eq + Ord + Clone> {
     node_gain_modulated_errors: Vec<NodePredictionDiffs>,
     node_errors: Vec<NodeErrors>,
     node_sizes: Vec<usize>,
+    node_types: Vec<NodeType>,
     next_node_index: usize,
     weight_matrices: Vec<DMatrix<f64>>,
     edges: Vec<Edge>,
@@ -32,6 +33,7 @@ impl<NodeId: Eq + Ord + Clone> Default for PCN<NodeId> {
             node_gain_modulated_errors: Vec::new(),
             node_errors: Vec::new(),
             node_sizes: Vec::new(),
+            node_types: Vec::new(),
             next_node_index: 0,
             weight_matrices: Vec::new(),
             edges: Vec::new(),
@@ -54,6 +56,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             .push(NodePredictionDiffs::new(size));
         self.node_errors.push(NodeErrors::new(size));
         self.node_sizes.push(size);
+        self.node_types.push(Default::default());
 
         self.nodes_map.insert(id.clone(), node_index);
     }
@@ -235,6 +238,11 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
         }
     }
 
+    pub fn set_node_type(&mut self, node_id: &NodeId, node_type: NodeType) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_types[*node_index] = node_type;
+    }
+
     pub fn node_values(&self, node_id: &NodeId) -> &[f64] {
         let node_index = self.nodes_map.get(node_id).unwrap();
         self.node_values[*node_index].0.as_ref()
@@ -288,5 +296,18 @@ impl Edge {
             target,
             weight_matrix,
         }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum NodeType {
+    Internal,
+    Sensor,
+    Fxied,
+}
+
+impl Default for NodeType {
+    fn default() -> Self {
+        Self::Internal
     }
 }
