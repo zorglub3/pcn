@@ -187,6 +187,19 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
             *item += self.mul_col_vec(input, i);
         }
     }
+
+    /// Transpose self and multiply with column vector and add the
+    /// result to output vector - scaled.
+    pub fn trans_mul_vec_add_scale(&self, scl: T, input: &[T], output: &mut [T]) {
+        debug_assert_eq!(self.rows, input.len());
+        debug_assert_eq!(self.cols, output.len());
+
+        for (i, item) in output.iter_mut().enumerate() {
+            *item += scl * self.mul_col_vec(input, i);
+        }
+    }
+
+
 }
 
 impl<T: AddAssign + Copy> DMatrix<T> {
