@@ -97,9 +97,10 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             .node_errors
             .iter_mut()
             .zip(&self.node_values)
-            .zip(&self.node_predictions);
+            .zip(&self.node_predictions)
+            .zip(&self.node_types);
 
-        for ((error, value), prediction) in iter {
+        for (((error, value), prediction), node_type) in iter {
             let inner_iter = error
                 .0
                 .iter_mut()
@@ -107,7 +108,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
                 .zip(prediction.0.as_ref());
 
             for ((e, v), p) in inner_iter {
-                let err = v - p;
+                let err = if node_type.is_sensor() { p - v } else { v - p };
                 *e = err;
                 error_square_sum += err * err;
             }
@@ -128,8 +129,13 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     }
 
     pub fn compute_predictions(&mut self) {
-        for prediction in self.node_predictions.iter_mut() {
-            prediction.0.as_mut().fill(0.);
+        // TODO Not just nodes of "Fixed" type should not update predictions 
+        //  Also nodes with no incoming edges - their predictions will otherwise be 
+        //  zero with no way to change.
+        for (prediction, node_type) in self.node_predictions.iter_mut().zip(&self.node_types) {
+            if node_type.update_predictions() {
+                prediction.0.as_mut().fill(0.);
+            }
         }
 
         for edge in self.edges.iter() {
@@ -137,11 +143,15 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             let source = self.node_values[edge.source].0.as_ref();
             let target = self.node_predictions[edge.target].0.as_mut();
 
-            matrix.mul_vec_add(source, target);
+            if self.node_types[edge.target].update_predictions() {
+                matrix.mul_vec_add(source, target);
+            }
         }
 
         for (i, prediction) in self.node_predictions.iter_mut().enumerate() {
-            self.activation_functions[i].eval_inplace(prediction.0.as_mut());
+            if self.node_types[i].update_predictions() {
+                self.activation_functions[i].eval_inplace(prediction.0.as_mut());
+            }
         }
     }
 
@@ -229,6 +239,18 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             .copy_from_slice(values);
     }
 
+    pub fn fix_node(&mut self, node_id: &NodeId, values: &[f64]) {
+        self.set_node_type(node_id, NodeType::Fixed);
+        self.set_values(node_id, values);
+        self.set_predictions(node_id, values);
+    }
+
+    pub fn fix_node_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
+        self.set_node_type(node_id, NodeType::Fixed);
+        self.set_values_from_bool(node_id, values);
+        self.set_predictions_from_bool(node_id, values);
+    }
+
     pub fn set_predictions_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
         let node_index = self.nodes_map.get(node_id).unwrap();
         let iter = self.node_predictions[*node_index].0.as_mut().iter_mut();
@@ -303,11 +325,21 @@ impl Edge {
 pub enum NodeType {
     Internal,
     Sensor,
-    Fxied,
+    Fixed,
 }
 
 impl Default for NodeType {
     fn default() -> Self {
         Self::Internal
+    }
+}
+
+impl NodeType {
+    pub fn update_predictions(&self) -> bool {
+        *self != Self::Fixed
+    }
+
+    pub fn is_sensor(&self) -> bool {
+        *self == Self::Sensor
     }
 }
