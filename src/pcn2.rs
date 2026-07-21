@@ -1,12 +1,12 @@
-//! Implementation fo Predictive Coding Network. Loosely based on 
-//! "Introduction to Predictive Coding Networks for Machine Learning" 
+//! Implementation fo Predictive Coding Network. Loosely based on
+//! "Introduction to Predictive Coding Networks for Machine Learning"
 //! by Mikko Stenlund.
 
 use crate::activation::ActivationFn;
 use crate::dmatrix::DMatrix;
+use crate::dvector::hadamard_inplace;
 use crate::dvector::randomize_vec;
 use crate::dvector::scale_sub_inplace;
-use crate::dvector::hadamard_inplace;
 use rand::Rng;
 use std::collections::BTreeMap;
 
@@ -78,9 +78,14 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             .push(Edge::new(*source, *target, weight_matrix_index));
     }
 
+    // TODO use Xavier uniform distribution (or normal dist - find out which one fits)
     pub fn randomize_weights<R: Rng>(&mut self, rng: &mut R) {
+        // Using uniform Xavier initialization. see
+        // https://www.geeksforgeeks.org/deep-learning/xavier-initialization/
+
         for weight_matrix in self.weight_matrices.iter_mut() {
-            weight_matrix.randomize(1., rng);
+            let x = (6. / (weight_matrix.rows() + weight_matrix.cols()) as f64).sqrt();
+            weight_matrix.randomize(x, rng);
         }
     }
 
@@ -129,8 +134,8 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     }
 
     pub fn compute_predictions(&mut self) {
-        // TODO Not just nodes of "Fixed" type should not update predictions 
-        //  Also nodes with no incoming edges - their predictions will otherwise be 
+        // TODO Not just nodes of "Fixed" type should not update predictions
+        //  Also nodes with no incoming edges - their predictions will otherwise be
         //  zero with no way to change.
         for (prediction, node_type) in self.node_predictions.iter_mut().zip(&self.node_types) {
             if node_type.update_predictions() {
@@ -170,18 +175,17 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
 
         for (i, gain_modulated_errors) in self.node_gain_modulated_errors.iter_mut().enumerate() {
             self.activation_functions[i].diff_inplace(gain_modulated_errors.0.as_mut());
-            hadamard_inplace(self.node_errors[i].0.as_ref(), gain_modulated_errors.0.as_mut());
+            hadamard_inplace(
+                self.node_errors[i].0.as_ref(),
+                gain_modulated_errors.0.as_mut(),
+            );
         }
     }
 
     pub fn compute_values(&mut self, gamma: f64) {
         self.compute_gain_modulated_errors();
 
-        for (e, v) in self
-            .node_errors
-            .iter()
-            .zip(self.node_values.iter_mut())
-        {
+        for (e, v) in self.node_errors.iter().zip(self.node_values.iter_mut()) {
             scale_sub_inplace(gamma, e.0.as_ref(), v.0.as_mut());
         }
 
@@ -321,17 +325,12 @@ impl Edge {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Default)]
 pub enum NodeType {
+    #[default]
     Internal,
     Sensor,
     Fixed,
-}
-
-impl Default for NodeType {
-    fn default() -> Self {
-        Self::Internal
-    }
 }
 
 impl NodeType {

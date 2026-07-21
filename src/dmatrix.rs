@@ -198,8 +198,6 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
             *item += scl * self.mul_col_vec(input, i);
         }
     }
-
-
 }
 
 impl<T: AddAssign + Copy> DMatrix<T> {
