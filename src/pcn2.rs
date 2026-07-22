@@ -185,16 +185,21 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     pub fn compute_values(&mut self, gamma: f64) {
         self.compute_gain_modulated_errors();
 
-        for (e, v) in self.node_errors.iter().zip(self.node_values.iter_mut()) {
-            scale_sub_inplace(gamma, e.0.as_ref(), v.0.as_mut());
+        for ((e, v), t) in self.node_errors.iter().zip(self.node_values.iter_mut()).zip(self.node_types.iter()) {
+            if t.update_values() {
+                scale_sub_inplace(gamma, e.0.as_ref(), v.0.as_mut());
+            }
         }
 
         for edge in self.edges.iter() {
             let w = &self.weight_matrices[edge.weight_matrix];
             let gme = self.node_gain_modulated_errors[edge.target].0.as_ref();
             let v = self.node_values[edge.source].0.as_mut();
+            let t = &self.node_types[edge.source];
 
-            w.trans_mul_vec_add_scale(gamma, gme, v);
+            if t.update_values() {
+                w.trans_mul_vec_add_scale(gamma, gme, v);
+            }
         }
     }
 
@@ -340,5 +345,9 @@ impl NodeType {
 
     pub fn is_sensor(&self) -> bool {
         *self == Self::Sensor
+    }
+
+    pub fn update_values(&self) -> bool {
+        *self == Self::Internal
     }
 }
