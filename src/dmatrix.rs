@@ -1,6 +1,6 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter, Error as FmtError};
 use std::ops::{AddAssign, Index, IndexMut, Mul, Range};
 
 /// A Dense matrix with data stored row-wise
@@ -11,16 +11,13 @@ pub struct DMatrix<T> {
     data: Vec<T>,
 }
 
-impl<T: Debug> DMatrix<T> {
-    /// Prettyh print the matrix to stdout.
-    #[allow(dead_code)]
-    pub fn pp(&self) {
-        for r in 0..self.rows {
-            for c in 0..self.cols {
-                print!("{:?} ", self[(r, c)]);
-            }
-            println!();
-        }
+impl<T: Debug> Debug for DMatrix<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
+        f.debug_map()
+            .entries((0..self.rows).map(|row| {
+                (row, &self.data[(row * self.cols)..((row + 1) * self.cols)])
+            }))
+            .finish()
     }
 }
 

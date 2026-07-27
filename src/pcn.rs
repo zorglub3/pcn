@@ -494,11 +494,13 @@ impl PCN {
         }
         println!();
 
+        /*
         println!("# Matrices");
         for (n, matrix) in self.matrices.iter().enumerate() {
             println!("Matrix {}:", n);
             matrix.matrix.pp();
         }
+        */
         println!();
     }
 }

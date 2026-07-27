@@ -18,10 +18,10 @@ const SENSOR_NODE: &str = "SENSOR";
 const LABEL_NODE: &str = "LABEL";
 
 const TEST_PATTERNS: [([bool; 2], [bool; 1]); 4] = [
-    ([true, true], [true]),
-    ([false, true], [false]),
-    ([true, false], [false]),
-    ([false, false], [false]),
+    ([true, true], [false]),
+    ([false, true], [true]),
+    ([true, false], [true]),
+    ([false, false], [true]),
 ];
 
 type NodeId = String;
