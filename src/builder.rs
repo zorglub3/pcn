@@ -1,5 +1,5 @@
 use crate::activation::ActivationFn;
-use crate::pcn2::*;
+use crate::pcn::*;
 
 struct NodeSpec<NodeId: Eq + Ord> {
     id: NodeId,
@@ -30,10 +30,7 @@ impl<NodeId: Eq + Ord + Clone> Default for Builder<NodeId> {
 impl<NodeId: Eq + Ord + Clone> Builder<NodeId> {
     #[allow(unused)]
     fn has_node(&self, id: &NodeId) -> bool {
-        self.nodes
-            .iter()
-            .find(|node_spec| node_spec.id == *id)
-            .is_some()
+        self.nodes.iter().any(|node_spec| node_spec.id == *id)
     }
 
     pub fn add_node(mut self, id: NodeId, activation_function: ActivationFn, size: usize) -> Self {

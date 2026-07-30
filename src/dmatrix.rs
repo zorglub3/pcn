@@ -1,4 +1,5 @@
 use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter, Error as FmtError};
 use std::ops::{AddAssign, Index, IndexMut, Mul, Range};
@@ -176,6 +177,7 @@ impl<T: Mul<Output = T> + Default + AddAssign + Copy> DMatrix<T> {
 
     /// Transpose self and multiply with column vector and add the
     /// result to output vector.
+    #[allow(unused)]
     pub fn trans_mul_vec_add(&self, input: &[T], output: &mut [T]) {
         debug_assert_eq!(self.rows, input.len());
         debug_assert_eq!(self.cols, output.len());
@@ -258,6 +260,7 @@ impl DMatrix<f64> {
         }
     }
 
+    #[allow(unused)]
     pub fn randomize_xavier(&mut self, rng: &mut impl Rng) {
         let amount = (6. / (self.rows() + self.cols()) as f64).sqrt();
         for item in &mut self.data {

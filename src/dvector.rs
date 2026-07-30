@@ -1,5 +1,8 @@
 //! Dense vector functions for slices of f64 values
 
+use rand::Rng;
+use rand::RngExt;
+
 #[inline]
 pub fn hadamard_inplace(a: &[f64], b: &mut [f64]) {
     debug_assert_eq!(a.len(), b.len());
@@ -20,6 +23,7 @@ pub fn add_inplace(a: &[f64], b: &mut [f64]) {
 }
 
 #[inline]
+#[allow(unused)]
 pub fn scale_add_inplace(gamma: f64, a: &[f64], b: &mut [f64]) {
     debug_assert_eq!(a.len(), b.len());
 
@@ -29,6 +33,7 @@ pub fn scale_add_inplace(gamma: f64, a: &[f64], b: &mut [f64]) {
 }
 
 #[inline]
+#[allow(unused)]
 pub fn sub_inplace(a: &[f64], b: &mut [f64]) {
     debug_assert_eq!(a.len(), b.len());
 
@@ -48,7 +53,7 @@ pub fn scale_sub_inplace(gamma: f64, a: &[f64], b: &mut [f64]) {
 }
 
 #[inline]
-pub fn randomize_vec(amount: f64, v: &mut [f64], rng: &mut impl rand::Rng) {
+pub fn randomize_vec(amount: f64, v: &mut [f64], rng: &mut impl Rng) {
     for item in v {
         *item = rng.random_range(-amount..amount);
     }

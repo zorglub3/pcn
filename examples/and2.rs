@@ -1,9 +1,4 @@
-use pcn::bool_to_f64;
-use pcn::builder::*;
-use pcn::pcn2::PCN;
-use pcn::pcn2::NodeType;
-use pcn::square_error;
-use pcn::ActivationFn;
+use ::pcn::*;
 use rand::Rng;
 
 const SENSOR_SIZE: usize = 2;

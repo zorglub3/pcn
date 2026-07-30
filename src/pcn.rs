@@ -1,506 +1,481 @@
+//! Implementation fo Predictive Coding Network. Loosely based on
+//! "Introduction to Predictive Coding Networks for Machine Learning"
+//! by Mikko Stenlund.
+
 use crate::activation::ActivationFn;
 use crate::dmatrix::DMatrix;
-use crate::dvector::add_inplace;
 use crate::dvector::hadamard_inplace;
-use crate::spec::NodeId;
-use petgraph::graph::DefaultIx;
-use petgraph::graph::Graph;
-use petgraph::graph::NodeIndex;
-use petgraph::prelude::EdgeRef;
-use petgraph::Direction;
+use crate::dvector::randomize_vec;
+use crate::dvector::scale_sub_inplace;
 use rand::Rng;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::fmt::{Debug, Formatter, Error as FmtError};
 
-// TODO refactor/fix THE PROBLEM that it doesn't learn...
-// sensor node vs the other kinds of nodes ("memory nodes").
-// How errors and predictions are interpreted...
-//
-// TODO bugfix - support multiple connections to-/from- nodes
-// Check how this affects predictions, value propagation and learning step
-//
-// TODO use boxed slices?
-//
-// TODO lookup node by tag
-//
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub enum NodeRole {
-    Hidden,
-    Sensor,
-    Memory,
+pub struct PCN<NodeId: Eq + Ord + Clone> {
+    activation_functions: Vec<ActivationFn>,
+    node_values: Vec<NodeValues>,
+    node_predictions: Vec<NodePredictions>,
+    node_gain_modulated_errors: Vec<NodePredictionDiffs>,
+    node_errors: Vec<NodeErrors>,
+    node_sizes: Vec<usize>,
+    node_types: Vec<NodeType>,
+    node_in_degree: Vec<usize>,
+    node_out_degree: Vec<usize>,
+    next_node_index: usize,
+    weight_matrices: Vec<DMatrix<f64>>,
+    edges: Vec<Edge>,
+    nodes_map: BTreeMap<NodeId, NodeIndex>,
 }
 
-impl Default for NodeRole {
+#[derive(Debug)]
+#[allow(dead_code)]
+struct NodeData<'a> {
+    values: &'a NodeValues,
+    predictions: &'a NodePredictions,
+    errors: &'a NodeErrors,
+}
+
+#[derive(Debug)]
+#[allow(dead_code)]
+struct EdgeData<'a, NodeId: Debug> {
+    source: &'a NodeId,
+    target: &'a NodeId,
+    matrix: usize,
+}
+
+impl<NodeId: Eq + Ord + Clone + Debug> Debug for PCN<NodeId> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
+        f.debug_map()
+            .entries(self.nodes_map.iter().map(|(k, v)| {
+                (
+                    k, 
+                    NodeData {
+                        values: &self.node_values[*v],
+                        predictions: &self.node_predictions[*v],
+                        errors: &self.node_errors[*v],
+                    }
+                 )
+            }))
+            .finish()?;
+
+        f.debug_list()
+            .entries(self.edges.iter().map(|e| {
+                EdgeData {
+                    source: self.reverse_lookup_node(e.source),
+                    target: self.reverse_lookup_node(e.target),
+                    matrix: e.weight_matrix,
+                }
+            }))
+            .finish()?;
+
+        f.debug_list()
+            .entries(self.weight_matrices.iter())
+            .finish()?;
+
+        Ok(())
+    }
+}
+
+impl<NodeId: Eq + Ord + Clone> Default for PCN<NodeId> {
     fn default() -> Self {
-        Self::Hidden
-    }
-}
-
-pub struct PCNode {
-    activation_fn: ActivationFn,
-    values: Vec<f64>,
-    predictions: Vec<f64>,
-    errors: Vec<f64>,
-    role: NodeRole,
-    #[allow(unused)]
-    tags: Vec<String>,
-}
-
-impl PCNode {
-    pub fn new(activation_fn: ActivationFn, size: usize, str_tags: &[&str]) -> Self {
-        let values = vec![0.; size];
-        let predictions = vec![0.; size];
-        let errors = vec![0.; size];
-        let mut tags = Vec::new();
-        let role = NodeRole::default();
-
-        for str_tag in str_tags {
-            tags.push(str_tag.to_string());
-        }
-
-        PCNode {
-            activation_fn,
-            values,
-            predictions,
-            errors,
-            role,
-            tags,
-        }
-    }
-
-    #[inline]
-    pub fn size(&self) -> usize {
-        self.values.len()
-    }
-
-    #[inline]
-    pub fn values(&self) -> &[f64] {
-        &self.values
-    }
-
-    #[inline]
-    pub fn errors(&self) -> &[f64] {
-        &self.errors
-    }
-
-    #[inline]
-    pub fn predictions(&self) -> &[f64] {
-        &self.predictions
-    }
-
-    #[inline]
-    pub fn activation(&self) -> &ActivationFn {
-        &self.activation_fn
-    }
-
-    #[inline]
-    pub fn set_values(&mut self, new_values: &[f64]) {
-        use NodeRole::*;
-
-        match self.role {
-            Sensor | Memory => { /* do nothing */ }
-            _ => self.values.copy_from_slice(new_values),
-        }
-    }
-
-    #[inline]
-    pub fn update_values(&mut self, delta: &[f64]) {
-        use NodeRole::*;
-
-        match self.role {
-            Sensor | Memory => { /* do nothing*/ }
-            _ => add_inplace(delta, &mut self.values),
-        }
-    }
-
-    #[inline]
-    pub fn set_predictions(&mut self, new_predictions: &[f64]) {
-        use NodeRole::*;
-
-        match self.role {
-            Memory => { /* do nothing */ }
-            _ => self.predictions.copy_from_slice(new_predictions),
-        }
-    }
-
-    #[inline]
-    pub fn energy(&self) -> f64 {
-        self.errors.iter().map(|error| error * error).sum()
-    }
-
-    #[inline]
-    pub fn compute_errors(&mut self) -> f64 {
-        let mut error_square_sum = 0.;
-
-        for ((e, v), p) in self
-            .errors
-            .iter_mut()
-            .zip(&self.values)
-            .zip(&self.predictions)
-        {
-            let err = if let NodeRole::Sensor = self.role {
-                v - p
-            } else {
-                v - p
-            };
-            *e = err;
-            error_square_sum += err * err;
-        }
-
-        error_square_sum
-    }
-
-    #[inline]
-    #[allow(dead_code)]
-    pub fn compute_errors_with_variance(&mut self, sigma: f64) -> f64 {
-        let mut error_square_sum = 0.;
-
-        for ((e, v), p) in self
-            .errors
-            .iter_mut()
-            .zip(&self.values)
-            .zip(&self.predictions)
-        {
-            let err = if let NodeRole::Sensor = self.role {
-                (v - p) / sigma
-            } else {
-                (v - p) / sigma
-            };
-
-            *e = err;
-            error_square_sum += err * err;
-        }
-
-        error_square_sum
-    }
-
-    #[inline]
-    pub fn reset(&mut self) {
-        if !matches!(self.role, NodeRole::Memory) {
-            self.values.fill(0.);
-            self.errors.fill(0.);
-            self.predictions.fill(0.);
-        }
-    }
-
-    #[inline]
-    pub fn fix_values(&mut self, new_values: &[f64], role: NodeRole) {
-        use NodeRole::*;
-
-        if let Memory = role {
-            self.predictions.copy_from_slice(new_values);
-        }
-
-        self.values.copy_from_slice(new_values);
-        self.role = role;
-    }
-
-    #[inline]
-    pub fn set_role(&mut self, role: NodeRole) {
-        self.role = role;
-    }
-
-    #[inline]
-    pub fn randomize_values(&mut self, amount: f64, rng: &mut impl Rng) {
-        if !matches!(self.role, NodeRole::Memory) {
-            self.values.fill_with(|| rng.random_range(-amount..amount));
-        }
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Serialize, Deserialize)]
-pub enum LearningRule {
-    Hebbian,
-    Oja,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct WeightMatrix {
-    pub matrix: DMatrix<f64>,
-    pub learning_rule: LearningRule,
-}
-
-#[derive(Clone)]
-pub(crate) struct PCEdge {
-    weight_matrix_index: usize,
-}
-
-impl PCEdge {
-    pub fn new(weight_matrix_index: usize) -> Self {
         Self {
-            weight_matrix_index,
+            activation_functions: Vec::new(),
+            node_values: Vec::new(),
+            node_predictions: Vec::new(),
+            node_gain_modulated_errors: Vec::new(),
+            node_errors: Vec::new(),
+            node_sizes: Vec::new(),
+            node_types: Vec::new(),
+            node_in_degree: Vec::new(),
+            node_out_degree: Vec::new(),
+            next_node_index: 0,
+            weight_matrices: Vec::new(),
+            edges: Vec::new(),
+            nodes_map: BTreeMap::new(),
         }
     }
 }
 
-type NodeIdx = NodeIndex<DefaultIx>;
+impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
+    pub fn add_node(&mut self, id: &NodeId, activation_function: ActivationFn, size: usize) {
+        debug_assert!(!self.nodes_map.contains_key(id));
 
-#[allow(clippy::upper_case_acronyms)]
-pub struct PCN {
-    graph: Graph<PCNode, PCEdge>,
-    nodes_map: HashMap<NodeId, NodeIdx>,
-    matrices: Vec<WeightMatrix>,
-}
+        let node_index = self.next_node_index;
+        self.next_node_index += 1;
 
-impl PCN {
-    pub(crate) fn new(
-        graph: Graph<PCNode, PCEdge>,
-        nodes_map: HashMap<NodeId, NodeIndex<DefaultIx>>,
-        matrices: Vec<WeightMatrix>,
-    ) -> Self {
-        Self {
-            graph,
-            nodes_map,
-            matrices,
-        }
+        self.activation_functions.push(activation_function);
+        self.node_values.push(NodeValues::new(size));
+        self.node_predictions.push(NodePredictions::new(size));
+        self.node_gain_modulated_errors
+            .push(NodePredictionDiffs::new(size));
+        self.node_errors.push(NodeErrors::new(size));
+        self.node_sizes.push(size);
+        self.node_types.push(Default::default());
+        self.node_in_degree.push(0);
+        self.node_out_degree.push(0);
+
+        self.nodes_map.insert(id.clone(), node_index);
     }
 
-    fn node_size(&self, node_index: &NodeIdx) -> usize {
-        self.graph.node_weight(*node_index).unwrap().size()
+    pub fn add_edge(&mut self, source_id: &NodeId, target_id: &NodeId) {
+        debug_assert!(self.nodes_map.contains_key(source_id));
+        debug_assert!(self.nodes_map.contains_key(target_id));
+
+        let source = self.nodes_map.get(source_id).unwrap();
+        let target = self.nodes_map.get(target_id).unwrap();
+
+        let source_size = self.node_sizes[*source];
+        let target_size = self.node_sizes[*target];
+        let weight_matrix = DMatrix::new(target_size, source_size, 0.);
+        let weight_matrix_index = self.weight_matrices.len();
+
+        self.node_in_degree[*target] += 1;
+        self.node_out_degree[*source] += 1;
+
+        self.weight_matrices.push(weight_matrix);
+        self.edges
+            .push(Edge::new(*source, *target, weight_matrix_index));
     }
 
-    fn edge_weight_matrix<'a>(&'a self, edge_weight: &PCEdge) -> &'a DMatrix<f64> {
-        &self.matrices[edge_weight.weight_matrix_index].matrix
-    }
-
-    pub fn compute_predictions(&mut self) {
-        // TODO no need for local buffer 'node_predictions'. Can ask for mutable refererence
-        //  to the actual buffer when evaluating the activation function.
-        for node_index in self.graph.node_indices() {
-            let node_size = self.node_size(&node_index);
-            let mut node_predictions = vec![0.; node_size];
-            let mut acc = vec![0.; node_size];
-
-            for edge in self.graph.edges_directed(node_index, Direction::Incoming) {
-                let n2 = edge.source();
-
-                self.edge_weight_matrix(edge.weight())
-                    .mul_vec_add(self.graph.node_weight(n2).unwrap().values(), &mut acc);
+    fn reverse_lookup_node(&self, node_index: usize) -> &NodeId {
+        for (k, v) in self.nodes_map.iter() {
+            if *v == node_index {
+                return k;
             }
+        }
 
-            self.graph
-                .node_weight(node_index)
-                .unwrap()
-                .activation()
-                .eval(&acc, &mut node_predictions);
+        panic!("node index {} not in PCN", node_index);
+    }
 
-            self.graph
-                .node_weight_mut(node_index)
-                .unwrap()
-                .set_predictions(&node_predictions);
+    // TODO use Xavier uniform distribution (or normal dist - find out which one fits)
+    pub fn randomize_weights<R: Rng>(&mut self, rng: &mut R) {
+        // Using uniform Xavier initialization. see
+        // https://www.geeksforgeeks.org/deep-learning/xavier-initialization/
+
+        for weight_matrix in self.weight_matrices.iter_mut() {
+            let x = (6. / (weight_matrix.rows() + weight_matrix.cols()) as f64).sqrt();
+            weight_matrix.randomize(x, rng);
+        }
+    }
+
+    pub fn randomize_weights_normal<R: Rng>(&mut self, _rng: &mut R) {
+        // Using normal Xavier initialization
+
+        for weight_matrix in self.weight_matrices.iter_mut() {
+            todo!()
+        }
+    }
+
+    pub fn randomize_values<R: Rng>(&mut self, rng: &mut R) {
+        for node_value in self.node_values.iter_mut() {
+            randomize_vec(1., node_value.0.as_mut(), rng);
         }
     }
 
     pub fn compute_errors(&mut self) -> f64 {
-        let mut err_sum_sqr = 0.;
-        for node_weight in self.graph.node_weights_mut() {
-            err_sum_sqr += node_weight.compute_errors();
-        }
-        err_sum_sqr
-    }
+        // TODO node with no incoming edges has not predictions and thus no intrinsic error
+        let mut error_square_sum = 0.;
 
-    pub fn compute_values(&mut self, gamma: f64) {
-        // TODO use inplace_diff function (not implemented yet) to evaluate
-        //  activation function diff. This gets rid of one local buffer.
-        // TODO FIX THE BUG!!! This is actually kind of async update. All updates should
-        //  be computed first - for _all_ nodes, and only _after_ that should the updates
-        //  be applied.
+        let iter = self
+            .node_errors
+            .iter_mut()
+            .zip(&self.node_values)
+            .zip(&self.node_predictions)
+            .zip(&self.node_types)
+            .zip(&self.node_in_degree);
 
-        for node_index in self.graph.node_indices() {
-            let w = self.graph.node_weight(node_index).unwrap();
+        for ((((error, value), prediction), node_type), node_in_degree) in iter {
+            if *node_in_degree == 0 {
+                error.0.as_mut().fill(0.);
+            } else {
+                let inner_iter = error
+                    .0
+                    .iter_mut()
+                    .zip(value.0.as_ref())
+                    .zip(prediction.0.as_ref());
 
-            let mut acc = vec![0.; w.size()];
-
-            for edge in self.graph.edges_directed(node_index, Direction::Outgoing) {
-                let n2 = edge.target();
-                let w2 = self.graph.node_weight(n2).unwrap();
-                let mut a = vec![0.; w2.size()];
-
-                self.edge_weight_matrix(edge.weight())
-                    .mul_vec(w.values(), &mut a); // a = W x_source
-
-                let mut b = vec![0.; w2.size()];
-                w2.activation().diff(&a, &mut b); // b = f'(W x_source)
-
-                hadamard_inplace(w2.errors(), &mut b); // b = f'(W x_source) * e_target
-
-                self.edge_weight_matrix(edge.weight())
-                    .trans_mul_vec_add(&b, &mut acc); // acc += W^T (f'(W x_source) * e_target)
-            }
-
-            let es = self.node_errors(&node_index);
-            for (i, item) in acc.iter_mut().enumerate() {
-                *item -= es[i]; // acc = W^T (f'(a) * e_target) - e_source
-                *item *= gamma; // acc = gamma (W^T (f'(W x_source) * e_target) - e_source)
-            }
-
-            self.update_node_values(&node_index, &acc);
-        }
-    }
-
-    pub fn inference_step(&mut self, gamma: f64) -> f64 {
-        self.compute_predictions();
-        let err_sum_sqr = self.compute_errors();
-        self.compute_values(gamma);
-        err_sum_sqr
-    }
-
-    pub fn inference_steps(&mut self, gamma: f64, steps: usize) {
-        // println!("doing {} inference steps", steps);
-        for _i in 0..steps {
-            let _err = self.inference_step(gamma);
-            // println!("step {_i}, error={_err}");
-            // self.pp();
-        }
-    }
-
-    pub fn compute_total_energy(&mut self) -> f64 {
-        self.compute_predictions();
-        self.compute_errors()
-    }
-
-    pub fn infer_and_learn(&mut self, gamma: f64, alpha: f64, steps: usize) {
-        for _i in 0..steps {
-            self.inference_step(gamma);
-            self.learning_step(alpha);
-        }
-    }
-
-    pub fn learning_step(&mut self, alpha: f64) {
-        for edge_index in self.graph.edge_indices() {
-            let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
-            let source_node = self.graph.node_weight(source).unwrap();
-            let target_node = self.graph.node_weight(target).unwrap();
-            let matrix_index = self
-                .graph
-                .edge_weight(edge_index)
-                .unwrap()
-                .weight_matrix_index;
-
-            let mut a = vec![0.; target_node.size()];
-
-            self.matrices[matrix_index]
-                .matrix
-                .mul_vec(source_node.values(), &mut a);
-            // a = W x_source
-
-            let mut b = vec![0.; target_node.size()];
-            target_node.activation().diff(&a, &mut b); // b = f'(W x_source)
-            hadamard_inplace(target_node.errors(), &mut b); // b = f'(W x_source) * e_target
-
-            let matrix = &mut self.matrices[matrix_index].matrix;
-            let values = &source_node.values();
-
-            // TODO select learning rule by matrix
-            for r in 0..matrix.rows() {
-                for c in 0..matrix.cols() {
-                    // TODO - find the right version of Oja's rule to use.
-                    // line below or the other one
-                    // let delta = alpha * b[r] * (values[c] - b[r] * matrix[(r, c)]);
-                    // delta = alpha * (f'(W x_source) * e_target) (x_source - ...)
-                    let delta = alpha * values[c] * (b[r] - values[c] * matrix[(r, c)]);
-                    matrix[(r, c)] += delta;
+                for ((e, v), p) in inner_iter {
+                    let err = if node_type.is_label() { 
+                        p - v 
+                    } else { 
+                        v - p 
+                    };
+                    *e = err;
+                    error_square_sum += err * err;
                 }
             }
 
-            // self.matrices[matrix_index].add_vecs_mul(alpha, &b, &source_node.values());
+            // println!("::: errors {:?}", error.0.as_ref());
+        }
+
+        error_square_sum
+    }
+
+    pub fn inference_steps(&mut self, gamma: f64, n: usize) -> f64 {
+        let mut err = 0.;
+
+        // println!("start inference: {} steps", n);
+
+        for _i in 0..n {
+            self.compute_predictions();
+            err = self.compute_errors();
+            self.compute_values(gamma);
+
+            // println!("---> error: {}", err);
+        }
+
+        // println!("==> inference done. Final error: {}", err);
+
+        err
+    }
+
+    pub fn compute_predictions(&mut self) {
+        // TODO Not just nodes of "Label" type should not update predictions
+        //  Also nodes with no incoming edges - their predictions will otherwise be
+        //  zero with no way to change.
+        for (prediction, node_type) in self.node_predictions.iter_mut().zip(&self.node_types) {
+            if node_type.update_predictions() {
+                prediction.0.as_mut().fill(0.);
+            }
+        }
+
+        for edge in self.edges.iter() {
+            let matrix = &self.weight_matrices[edge.weight_matrix];
+            let source = self.node_values[edge.source].0.as_ref();
+            let target = self.node_predictions[edge.target].0.as_mut();
+
+            if self.node_types[edge.target].update_predictions() {
+                matrix.mul_vec_add(source, target);
+            }
+        }
+
+        for (i, prediction) in self.node_predictions.iter_mut().enumerate() {
+            if self.node_types[i].update_predictions() {
+                self.activation_functions[i].eval_inplace(prediction.0.as_mut());
+
+                // println!("::: predictions({}) {:?}", i, prediction.0.as_ref());
+            }
         }
     }
 
-    pub fn node_values(&self, id: NodeId) -> &[f64] {
-        self.graph
-            .node_weight(*self.nodes_map.get(&id).unwrap())
-            .unwrap()
-            .values()
-    }
+    pub fn compute_gain_modulated_errors(&mut self) {
+        for gain_modulated_errors in self.node_gain_modulated_errors.iter_mut() {
+            gain_modulated_errors.0.as_mut().fill(0.);
+        }
 
-    pub fn node_predictions(&self, id: NodeId) -> &[f64] {
-        self.graph
-            .node_weight(*self.nodes_map.get(&id).unwrap())
-            .unwrap()
-            .predictions()
-    }
+        for edge in self.edges.iter() {
+            let matrix = &self.weight_matrices[edge.weight_matrix];
+            let source = self.node_values[edge.source].0.as_ref();
+            let target = self.node_gain_modulated_errors[edge.target].0.as_mut();
 
-    pub fn set_node_values(&mut self, id: NodeId, new_values: &[f64]) {
-        self.graph
-            .node_weight_mut(*self.nodes_map.get(&id).unwrap())
-            .unwrap()
-            .set_values(new_values);
-    }
+            matrix.mul_vec_add(source, target);
+        }
 
-    pub fn fix_node_values(&mut self, id: NodeId, new_values: &[f64], role: NodeRole) {
-        self.graph
-            .node_weight_mut(*self.nodes_map.get(&id).unwrap())
-            .unwrap()
-            .fix_values(new_values, role);
-    }
+        for (i, gain_modulated_errors) in self.node_gain_modulated_errors.iter_mut().enumerate() {
+            self.activation_functions[i].diff_inplace(gain_modulated_errors.0.as_mut());
+            hadamard_inplace(
+                self.node_errors[i].0.as_ref(),
+                gain_modulated_errors.0.as_mut(),
+            );
 
-    fn update_node_values(&mut self, index: &NodeIdx, delta: &[f64]) {
-        self.graph
-            .node_weight_mut(*index)
-            .unwrap()
-            .update_values(delta);
-    }
-
-    fn node_errors(&self, index: &NodeIdx) -> &[f64] {
-        self.graph.node_weight(*index).unwrap().errors()
-    }
-
-    pub fn set_node_role(&mut self, id: NodeId, role: NodeRole) {
-        self.graph
-            .node_weight_mut(*self.nodes_map.get(&id).unwrap())
-            .unwrap()
-            .set_role(role);
-    }
-
-    pub fn randomize_all_nodes(&mut self, amount: f64, rng: &mut impl Rng) {
-        debug_assert!(amount > std::f64::EPSILON);
-
-        for node_weight in self.graph.node_weights_mut() {
-            node_weight.randomize_values(amount, rng);
+            // println!("::: gain modulated errors({}) {:?}", i, gain_modulated_errors.0.as_ref());
         }
     }
 
-    pub fn reset_all_nodes(&mut self) {
-        for node_weight in self.graph.node_weights_mut() {
-            node_weight.reset();
-        }
-    }
+    pub fn compute_values(&mut self, gamma: f64) {
+        debug_assert!(gamma >= 0.);
 
-    pub fn pp(&self) {
-        println!("# Nodes");
-        for node_id in self.nodes_map.keys() {
-            let node_index = self.nodes_map.get(node_id).unwrap();
-            let node_data = self.graph.node_weight(*node_index).unwrap();
-            println!("- Node {:?}:", &node_id);
-            println!("  + values: {:?}", node_data.values());
-            println!("  + errors: {:?}", node_data.errors());
-            println!("  + predictions: {:?}", node_data.predictions());
-            println!("  + energy: {:?}", node_data.energy());
-            println!("  + tags: {:?}", node_data.tags);
-        }
-        println!();
+        self.compute_gain_modulated_errors();
 
-        println!("# Edges");
-        for edge_index in self.graph.edge_indices() {
-            let weight = self.graph.edge_weight(edge_index).unwrap();
-            let (source, target) = self.graph.edge_endpoints(edge_index).unwrap();
-
-            println!("- Edge:");
-            println!("  + from node: {:?}", source);
-            println!("  + to node: {:?}", target);
-            println!("  + weight matrix: {:?}", weight.weight_matrix_index);
+        for ((e, v), t) in self.node_errors.iter().zip(self.node_values.iter_mut()).zip(self.node_types.iter()) {
+            if t.update_values() {
+                scale_sub_inplace(gamma, e.0.as_ref(), v.0.as_mut());
+            }
         }
-        println!();
+
+        for edge in self.edges.iter() {
+            let w = &self.weight_matrices[edge.weight_matrix];
+            let gme = self.node_gain_modulated_errors[edge.target].0.as_ref();
+            let v = self.node_values[edge.source].0.as_mut();
+            let t = &self.node_types[edge.source];
+
+            if t.update_values() {
+                w.trans_mul_vec_add_scale(gamma, gme, v);
+            }
+        }
 
         /*
-        println!("# Matrices");
-        for (n, matrix) in self.matrices.iter().enumerate() {
-            println!("Matrix {}:", n);
-            matrix.matrix.pp();
+        for (i, v) in self.node_values.iter().enumerate() {
+            println!("::: values({}) {:?}", i, v.0.as_ref());
         }
         */
-        println!();
+    }
+
+    pub fn learn_hebb(&mut self, alpha: f64) {
+        debug_assert!(alpha >= 0.);
+
+        self.compute_gain_modulated_errors();
+
+        for edge in self.edges.iter() {
+            let w = &mut self.weight_matrices[edge.weight_matrix];
+            let h = &self.node_gain_modulated_errors[edge.target].0.as_ref();
+            let x = &self.node_values[edge.source].0.as_ref();
+
+            for r in w.rows_range() {
+                for c in w.cols_range() {
+                    w[(r, c)] += alpha * h[r] * x[c];
+                }
+            }
+        }
+    }
+
+    pub fn learn_oja(&mut self, _alpha: f64) {
+        todo!()
+    }
+
+    pub fn set_values(&mut self, node_id: &NodeId, values: &[f64]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_values[*node_index]
+            .0
+            .as_mut()
+            .copy_from_slice(values);
+    }
+
+    pub fn set_values_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        let iter = self.node_values[*node_index].0.as_mut().iter_mut();
+
+        for (i, v) in values.iter().zip(iter) {
+            *v = if *i { 1. } else { -1. };
+        }
+    }
+
+    pub fn set_predictions(&mut self, node_id: &NodeId, values: &[f64]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_predictions[*node_index]
+            .0
+            .as_mut()
+            .copy_from_slice(values);
+    }
+
+    pub fn fix_node(&mut self, node_id: &NodeId, values: &[f64]) {
+        self.set_node_type(node_id, NodeType::Label);
+        self.set_values(node_id, values);
+        self.set_predictions(node_id, values);
+    }
+
+    pub fn fix_node_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
+        self.set_node_type(node_id, NodeType::Label);
+        self.set_values_from_bool(node_id, values);
+        self.set_predictions_from_bool(node_id, values);
+    }
+
+    pub fn set_predictions_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        let iter = self.node_predictions[*node_index].0.as_mut().iter_mut();
+
+        for (i, v) in values.iter().zip(iter) {
+            *v = if *i { 1. } else { -1. };
+        }
+    }
+
+    pub fn set_node_type(&mut self, node_id: &NodeId, node_type: NodeType) {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_types[*node_index] = node_type;
+    }
+
+    pub fn node_values(&self, node_id: &NodeId) -> &[f64] {
+        let node_index = self.nodes_map.get(node_id).unwrap();
+        self.node_values[*node_index].0.as_ref()
+    }
+}
+
+type NodeIndex = usize;
+
+struct NodeValues(Box<[f64]>);
+
+impl Debug for NodeValues {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
+        f.debug_list().entries(self.0.as_ref()).finish()
+    }
+}
+
+impl NodeValues {
+    fn new(size: usize) -> Self {
+        Self(vec![0.; size].into_boxed_slice())
+    }
+}
+
+struct NodePredictions(Box<[f64]>);
+
+impl NodePredictions {
+    fn new(size: usize) -> Self {
+        Self(vec![0.; size].into_boxed_slice())
+    }
+}
+
+impl Debug for NodePredictions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
+        f.debug_list().entries(self.0.as_ref()).finish()
+    }
+}
+
+struct NodePredictionDiffs(Box<[f64]>);
+
+impl NodePredictionDiffs {
+    fn new(size: usize) -> Self {
+        Self(vec![0.; size].into_boxed_slice())
+    }
+}
+
+struct NodeErrors(Box<[f64]>);
+
+impl Debug for NodeErrors {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
+        f.debug_list().entries(self.0.as_ref()).finish()
+    }
+}
+
+impl NodeErrors {
+    fn new(size: usize) -> Self {
+        Self(vec![0.; size].into_boxed_slice())
+    }
+}
+
+struct Edge {
+    source: NodeIndex,
+    target: NodeIndex,
+    weight_matrix: usize,
+}
+
+impl Edge {
+    fn new(source: NodeIndex, target: NodeIndex, weight_matrix: usize) -> Self {
+        Self {
+            source,
+            target,
+            weight_matrix,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Default)]
+pub enum NodeType {
+    #[default]
+    Internal,
+    Sensor,
+    Label,
+}
+
+impl NodeType {
+    pub fn update_predictions(&self) -> bool {
+        *self != Self::Label
+    }
+
+    pub fn is_label(&self) -> bool {
+        *self == Self::Label
+    }
+
+    pub fn update_values(&self) -> bool {
+        *self == Self::Internal
     }
 }
