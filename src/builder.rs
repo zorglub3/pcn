@@ -16,6 +16,7 @@ struct EdgeSpec<NodeId: Eq + Ord> {
 pub struct Builder<NodeId: Eq + Ord + Clone> {
     nodes: Vec<NodeSpec<NodeId>>,
     edges: Vec<EdgeSpec<NodeId>>,
+    node_id_source: Option<Box<dyn NodeIdSource<NodeId>>>,
 }
 
 impl<NodeId: Eq + Ord + Clone> Default for Builder<NodeId> {
@@ -23,11 +24,21 @@ impl<NodeId: Eq + Ord + Clone> Default for Builder<NodeId> {
         Self {
             nodes: Vec::new(),
             edges: Vec::new(),
+            node_id_source: None,
         }
     }
 }
 
 impl<NodeId: Eq + Ord + Clone> Builder<NodeId> {
+    pub fn with_generator(mut self, node_id_source: Box<dyn NodeIdSource<NodeId>>) -> Self {
+        self.node_id_source = Some(node_id_source);
+        self
+    }
+
+    pub fn new_node_id(&mut self) -> NodeId {
+        self.node_id_source.as_mut().unwrap().generate_node_id()
+    }
+
     #[allow(unused)]
     fn has_node(&self, id: &NodeId) -> bool {
         self.nodes.iter().any(|node_spec| node_spec.id == *id)
@@ -68,4 +79,8 @@ impl<NodeId: Eq + Ord + Clone> Builder<NodeId> {
 
         pcn
     }
+}
+
+pub trait NodeIdSource<NodeId: Eq + Ord + Clone> {
+    fn generate_node_id(&mut self) -> NodeId;
 }

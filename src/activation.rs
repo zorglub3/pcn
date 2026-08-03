@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use crate::dvector::eval_inplace;
+use crate::dvector::max_f64;
 
 #[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum ActivationFn {
@@ -7,134 +9,59 @@ pub enum ActivationFn {
     ReLu,
     LeakyReLu(f64),
     SoftPlus,
+    SoftMax,
     Linear,
 }
 
 impl ActivationFn {
-    pub fn eval(&self, input: &[f64], output: &mut [f64]) {
-        debug_assert_eq!(input.len(), output.len());
-
-        use ActivationFn::*;
-
-        match self {
-            Tanh => {
-                for i in 0..input.len() {
-                    output[i] = input[i].tanh();
-                }
-            }
-            Logistic => {
-                for i in 0..input.len() {
-                    output[i] = 1. / (1. + (-input[i]).exp());
-                }
-            }
-            ReLu => {
-                for i in 0..input.len() {
-                    output[i] = input[i].max(0.);
-                }
-            }
-            LeakyReLu(a) => {
-                for i in 0..input.len() {
-                    output[i] = input[i].max(a * input[i]);
-                }
-            }
-            SoftPlus => {
-                for i in 0..input.len() {
-                    output[i] = (1. + input[i].exp()).ln();
-                }
-            }
-            Linear => {
-                output.copy_from_slice(input);
-            }
-        }
-    }
-
     pub fn eval_inplace(&self, values: &mut [f64]) {
         use ActivationFn::*;
 
         match self {
-            Tanh => {
-                for v in values {
-                    *v = v.tanh();
+            Tanh => eval_inplace(|v| v.tanh(), values),
+            Logistic => eval_inplace(|v| 1. / (1. + (-v).exp()), values),
+            ReLu => eval_inplace(|v| v.max(0.), values),
+            LeakyReLu(a) => eval_inplace(|v| v.max(*a * v), values),
+            SoftPlus => eval_inplace(|v| (1. + v.exp()).ln(), values),
+            SoftMax => {
+                if values.len() > 0 {
+                    let d = max_f64(values).unwrap_or(0.);
+                    let h: f64 = values.iter().map(|v| (v - d).exp()).sum();
+                    eval_inplace(|v| (v - d).exp() / h, values);
                 }
             }
-            _ => todo!(),
+            Linear => { /* do nothing */ },
         }
     }
 
-    pub fn eval_mul(&self, input: &[f64], output: &mut [f64]) {
-        debug_assert_eq!(input.len(), output.len());
+    pub fn diff_inplace_mul(&self, multiplier: &[f64], values: &mut [f64]) {
+        debug_assert_eq!(multiplier.len(), values.len());
 
         use ActivationFn::*;
 
         match self {
-            Tanh => {
-                for i in 0..input.len() {
-                    output[i] *= input[i].tanh();
-                }
-            }
-            Logistic => {
-                for i in 0..input.len() {
-                    output[i] *= 1. / (1. + (-input[i]).exp());
-                }
-            }
-            ReLu => {
-                for i in 0..input.len() {
-                    output[i] *= input[i].max(0.);
-                }
-            }
-            LeakyReLu(a) => {
-                for i in 0..input.len() {
-                    output[i] *= input[i].max(a * input[i]);
-                }
-            }
-            SoftPlus => {
-                for i in 0..input.len() {
-                    output[i] *= (1. + input[i].exp()).ln();
-                }
-            }
-            Linear => {
-                for i in 0..input.len() {
-                    output[i] *= input[i];
-                }
-            }
-        }
-    }
+            SoftMax => {
+                let mut s = vec![0.; values.len()];
+                s.clone_from_slice(values);
+                self.diff_inplace(&mut s);
 
-    pub fn diff(&self, input: &[f64], output: &mut [f64]) {
-        debug_assert_eq!(input.len(), output.len());
-
-        use ActivationFn::*;
-
-        match self {
-            Tanh => {
-                for i in 0..input.len() {
-                    let v = input[i].tanh();
-                    output[i] = 1. - v * v;
+                for i in 0..values.len() {
+                    let mut acc = 0.;
+                    for j in 0..values.len() {
+                        if i == j {
+                            acc += s[i] * (1. - s[i]);
+                        } else {
+                            acc -= s[i] * s[j];
+                        }
+                    }
+                    values[i] = acc;
                 }
             }
-            Logistic => {
-                for i in 0..input.len() {
-                    let d = 1. / (1. + (-input[i]).exp());
-                    output[i] = d * (1. - d);
+            _ => {
+                self.diff_inplace(values);
+                for (v, m) in values.iter_mut().zip(multiplier) {
+                    *v *= m;
                 }
-            }
-            ReLu => {
-                for i in 0..input.len() {
-                    output[i] = if input[i] < 0. { 0. } else { 1. };
-                }
-            }
-            LeakyReLu(a) => {
-                for i in 0..input.len() {
-                    output[i] = if input[i] < a * input[i] { *a } else { 1. };
-                }
-            }
-            SoftPlus => {
-                for i in 0..input.len() {
-                    output[i] = 1. / (1. + (-input[i]).exp());
-                }
-            }
-            Linear => {
-                output.fill(1.);
             }
         }
     }
@@ -143,67 +70,13 @@ impl ActivationFn {
         use ActivationFn::*;
 
         match self {
-            Tanh => {
-                for value in values {
-                    let v = value.tanh();
-                    *value = 1. - v * v;
-                }
-            }
-            _ => todo!(),
-        }
-    }
-
-    pub fn diff_mul(&self, input: &[f64], output: &mut [f64]) {
-        debug_assert_eq!(input.len(), output.len());
-
-        use ActivationFn::*;
-
-        match self {
-            Tanh => {
-                for i in 0..input.len() {
-                    let v = input[i].tanh();
-                    output[i] *= 1. - v * v;
-                }
-            }
-            Logistic => {
-                for i in 0..input.len() {
-                    let d = 1. / (1. + (-input[i]).exp());
-                    output[i] *= d * (1. - d);
-                }
-            }
-            ReLu => {
-                for i in 0..input.len() {
-                    output[i] *= if input[i] < 0. { 0. } else { 1. };
-                }
-            }
-            LeakyReLu(a) => {
-                for i in 0..input.len() {
-                    output[i] *= if input[i] < a * input[i] { *a } else { 1. };
-                }
-            }
-            SoftPlus => {
-                for i in 0..input.len() {
-                    output[i] *= 1. / (1. + (-input[i]).exp());
-                }
-            }
-            Linear => {} // no effect
-        }
-    }
-
-    pub fn diff2(&self, input: &[f64], output: &mut [f64]) {
-        debug_assert_eq!(input.len(), output.len());
-
-        use ActivationFn::*;
-
-        match self {
-            Tanh => {
-                for i in 0..input.len() {
-                    let v = input[i].tanh();
-                    let d = 1. - v * v;
-                    output[i] = -2. * d * v;
-                }
-            }
-            _ => unimplemented!("coming soon? ever..?"),
+            Tanh => eval_inplace(|v| { let x = v.tanh(); 1. - x * x }, values),
+            Logistic => eval_inplace(|v| { let x = 1. / (1. + (-v).exp()); x * (1. - x) }, values),
+            ReLu => eval_inplace(|v| if v < 0. { 0. } else { 1. }, values),
+            LeakyReLu(a) => eval_inplace(|v| if v < a * v { *a } else { 1. }, values),
+            SoftPlus => eval_inplace(|v| 1. / (1. + (-v).exp()), values),
+            SoftMax => todo!(),
+            Linear => values.fill(1.),
         }
     }
 }
@@ -216,31 +89,32 @@ mod test {
     fn test_tanh() {
         let f = ActivationFn::Tanh;
 
-        let input = [1., -2., 0.];
+        let values = [1., -2., 0.];
 
-        let mut output = [0.; 3];
-
-        f.eval(&input, &mut output);
+        let mut output = values.clone();
+        f.eval_inplace(&mut output);
         assert_eq!(output[0], 1.0_f64.tanh());
         assert_eq!(output[1], (-2.0_f64).tanh());
         assert_eq!(output[2], 0.0);
 
-        let mut output = [1., -1., 0.];
-        f.eval_mul(&input, &mut output);
-        assert_eq!(output[0], 1.0_f64.tanh());
-        assert_eq!(output[1], -1. * (-2.0_f64).tanh());
-        assert_eq!(output[2], 0.0);
-
-        let mut output = [1., -1., 0.];
-        f.diff(&input, &mut output);
+        let mut output = values.clone();
+        f.diff_inplace(&mut output);
         assert_eq!(output[0], 1. - 1.0_f64.tanh() * 1.0_f64.tanh());
         assert_eq!(output[1], 1. - (-2.0_f64).tanh() * (-2.0_f64).tanh());
         assert_eq!(output[2], 1.);
+    }
 
-        let mut output = [1., -1., 0.];
-        f.diff_mul(&input, &mut output);
-        assert_eq!(output[0], 1. - 1.0_f64.tanh() * 1.0_f64.tanh());
-        assert_eq!(output[1], -1. + (-2.0_f64).tanh() * (-2.0_f64).tanh());
-        assert_eq!(output[2], 0.);
+    #[test]
+    fn test_softmax() {
+        let f = ActivationFn::SoftMax;
+
+        let values = [1., 0., -1.];
+        let mut output = values.clone();
+        f.eval_inplace(&mut output);
+        assert_eq!(output[0], 0.6652409557748219);
+        assert_eq!(output[1], 0.24472847105479767);
+        assert_eq!(output[2], 9.003057317038046e-2);
+
+        // TODO diff_inplace_mul
     }
 }

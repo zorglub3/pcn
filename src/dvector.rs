@@ -4,6 +4,34 @@ use rand::Rng;
 use rand::RngExt;
 
 #[inline]
+pub fn max_f64(vs: &[f64]) -> Option<f64> {
+    let mut result = None;
+    for v in vs {
+        if let Some(u) = result {
+            if u > v { 
+                result = Some(v);
+            }
+        }
+    }
+    result.copied()
+}
+
+#[inline]
+pub fn eval_inplace<F: Fn(f64) -> f64>(f: F, a: &mut [f64]) {
+    for v in a {
+        *v = f(*v);
+    }
+}
+
+#[inline]
+#[allow(unused)]
+pub fn eval_zip(f: fn(f64, f64) -> f64, a: &[f64], b: &mut [f64]) {
+    for (x, y) in a.iter().zip(b.iter_mut()) {
+        *y = f(*x, *y);
+    }
+}
+
+#[inline]
 pub fn hadamard_inplace(a: &[f64], b: &mut [f64]) {
     debug_assert_eq!(a.len(), b.len());
 

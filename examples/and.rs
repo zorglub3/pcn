@@ -1,13 +1,16 @@
-use pcn::*;
-use rand::prelude::*;
+use ::pcn::*;
+use rand::Rng;
 
-const GATE_INPUT_SIZE: usize = 2;
-const GATE_OUTPUT_SIZE: usize = 1;
+const SENSOR_SIZE: usize = 2;
+const LABEL_SIZE: usize = 1;
 
-const GAMMA: f64 = 0.3;
-const INFERENCE_STEPS: usize = 8;
-const ALPHA: f64 = 0.3;
+const GAMMA: f64 = 0.5;
+const INFERENCE_STEPS: usize = 4;
+const ALPHA: f64 = 1.0;
 const LEARNING_STEPS: usize = 1000;
+
+const SENSOR_NODE: &str = "SENSOR";
+const LABEL_NODE: &str = "LABEL";
 
 const TEST_PATTERNS: [([bool; 2], [bool; 1]); 4] = [
     ([true, true], [true]),
@@ -16,82 +19,92 @@ const TEST_PATTERNS: [([bool; 2], [bool; 1]); 4] = [
     ([false, false], [false]),
 ];
 
-fn test_it(gate_input: NodeId, gate_output: NodeId, pcn: &mut PCN, rng: &mut impl Rng) -> f64 {
+type NodeId = String;
+type MyPCN = PCN<NodeId>;
+
+fn test_it(sensor_node: &NodeId, label_node: &NodeId, pcn: &mut MyPCN) -> f64 {
     let mut total_error = 0.;
 
-    pcn.set_node_role(gate_output, NodeRole::Hidden);
-
-    for (input_pattern, output_pattern) in TEST_PATTERNS {
-        let f64_input_pattern = bool_to_f64(&input_pattern);
-        let f64_output_pattern = bool_to_f64(&output_pattern);
-
-        pcn.reset_all_nodes();
-        pcn.randomize_all_nodes(0.1, rng);
-        pcn.fix_node_values(gate_input, &f64_input_pattern, NodeRole::Memory);
+    println!("test it!");
+    for (input, output) in TEST_PATTERNS {
+        println!(":: patterns {:?} => {:?}", input, output);
+        pcn.set_node_type(sensor_node, NodeType::Sensor);
+        pcn.set_node_type(label_node, NodeType::Internal);
+        pcn.set_values_from_bool(sensor_node, &input);
 
         pcn.inference_steps(GAMMA, INFERENCE_STEPS);
 
-        let error = square_error(&f64_output_pattern, pcn.node_values(gate_output));
-
-        println!(
-            "{:?} => {:?} gives error {} (values: {:?})",
-            input_pattern,
-            output_pattern,
-            error,
-            pcn.node_values(gate_output)
-        );
-        total_error += error;
+        let output_pattern = bool_to_f64(&output);
+        let err = square_error(&output_pattern, pcn.node_values(label_node));
+        total_error += err;
+        println!(" {:?} => {:?}", &input, pcn.node_values(label_node));
     }
+
+    println!("testing done with error={}", total_error);
 
     total_error
 }
 
-fn learn_it(input_node: NodeId, output_node: NodeId, pcn: &mut PCN, rng: &mut impl Rng) {
-    for _i in 0..LEARNING_STEPS {
-        for (input_pattern, output_pattern) in TEST_PATTERNS {
-            let f64_input_pattern = bool_to_f64(&input_pattern);
-            let f64_output_pattern = bool_to_f64(&output_pattern);
+fn learn_it(
+    sensor_node: &NodeId,
+    label_node: &NodeId,
+    pcn: &mut MyPCN,
+    rng: &mut impl Rng,
+    n: usize,
+) {
+    let mut err = 0.;
 
-            pcn.reset_all_nodes();
-            pcn.randomize_all_nodes(1., rng);
+    println!("Learning, {} steps", n);
+    for _i in 0..n {
+        for (input, output) in TEST_PATTERNS {
+            //println!(":: patterns {:?} => {:?}", input, output);
+            pcn.randomize_values(rng);
+            pcn.set_node_type(sensor_node, NodeType::Sensor);
+            pcn.set_values_from_bool(sensor_node, &input);
+            pcn.fix_node_from_bool(label_node, &output);
 
-            pcn.fix_node_values(input_node, &f64_input_pattern, NodeRole::Memory);
-            pcn.fix_node_values(output_node, &f64_output_pattern, NodeRole::Sensor);
-
-            pcn.inference_steps(GAMMA, INFERENCE_STEPS);
-            pcn.learning_step(ALPHA);
+            err = pcn.inference_steps(GAMMA, INFERENCE_STEPS);
+            pcn.learn_hebb(ALPHA);
         }
     }
 
-    println!("After learning");
-    pcn.pp();
+    println!("learning done. Final error: {}", err);
 }
 
 fn main() {
     let mut rng = rand::rng();
 
-    let mut spec = Spec::default();
-    let gate_input = spec.add_node_with_tags(GATE_INPUT_SIZE, ActivationFn::Tanh, &["input"]);
-    let gate_output = spec.add_node_with_tags(GATE_OUTPUT_SIZE, ActivationFn::Tanh, &["output"]);
-    let bias = spec.add_node_with_tags(1, ActivationFn::Tanh, &["bias"]);
+    let builder = Builder::default();
 
-    spec.add_edge(bias, gate_output);
-    spec.add_edge(gate_input, gate_output);
+    let mut pcn: MyPCN = builder
+        .add_node(SENSOR_NODE.to_string(), ActivationFn::Tanh, SENSOR_SIZE)
+        .add_node(LABEL_NODE.to_string(), ActivationFn::Tanh, LABEL_SIZE)
+        .add_edge(LABEL_NODE.to_string(), SENSOR_NODE.to_string())
+        .build();
 
-    spec.randomize_all_matrices_xavier(&mut rng);
+    pcn.randomize_weights_uniform(&mut rng);
 
-    let mut and = spec.build_model();
+    let initial_error = test_it(&SENSOR_NODE.to_string(), &LABEL_NODE.to_string(), &mut pcn);
 
-    and.fix_node_values(bias, &[1.], NodeRole::Memory);
+    learn_it(
+        &SENSOR_NODE.to_string(),
+        &LABEL_NODE.to_string(),
+        &mut pcn,
+        &mut rng,
+        LEARNING_STEPS,
+    );
 
-    println!("PRE LEARNING");
-    let initial_error = test_it(gate_input, gate_output, &mut and, &mut rng);
-    println!("Pre learning error: {}", initial_error);
+    let final_error = test_it(&SENSOR_NODE.to_string(), &LABEL_NODE.to_string(), &mut pcn);
 
-    println!("LEARNING");
-    learn_it(gate_input, gate_output, &mut and, &mut rng);
+    println!(
+        "initial error: {} => final error: {}",
+        initial_error, final_error
+    );
 
-    println!("POST LEARNING");
-    let final_error = test_it(gate_input, gate_output, &mut and, &mut rng);
-    println!("Error after learning: {}", final_error);
+    println!(
+        "Improvement: {} (should be > 0)",
+        initial_error - final_error
+    );
+
+    // println!("Final network: {pcn:#?}");
 }

@@ -13,4 +13,4 @@
   Coding Network with Local Hebbian Synaptic Plasticity", Wittington and Bogacz
 - "A tutorial on the free-energy framework for modelling perception and learning",
   Bogacz
-
+- [Overview of techniques](https://www.emergentmind.com/topics/predictive-coding-networks)

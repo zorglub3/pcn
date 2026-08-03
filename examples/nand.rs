@@ -1,7 +1,7 @@
 use pcn::bool_to_f64;
 use pcn::builder::*;
-use pcn::pcn2::PCN;
-use pcn::pcn2::NodeType;
+use pcn::pcn::NodeType;
+use pcn::pcn::PCN;
 use pcn::square_error;
 use pcn::ActivationFn;
 use rand::Rng;
@@ -87,7 +87,7 @@ fn main() {
         .add_edge(LABEL_NODE.to_string(), SENSOR_NODE.to_string())
         .build();
 
-    pcn.randomize_weights(&mut rng);
+    pcn.randomize_weights_uniform(&mut rng);
 
     let initial_error = test_it(&SENSOR_NODE.to_string(), &LABEL_NODE.to_string(), &mut pcn);
 
@@ -106,7 +106,10 @@ fn main() {
         initial_error, final_error
     );
 
-    println!("Improvement: {} (should be > 0)", initial_error - final_error);
+    println!(
+        "Improvement: {} (should be > 0)",
+        initial_error - final_error
+    );
 
     // println!("Final network: {pcn:#?}");
 }

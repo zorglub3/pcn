@@ -9,7 +9,7 @@ use crate::dvector::randomize_vec;
 use crate::dvector::scale_sub_inplace;
 use rand::Rng;
 use std::collections::BTreeMap;
-use std::fmt::{Debug, Formatter, Error as FmtError};
+use std::fmt::{Debug, Error as FmtError, Formatter};
 
 pub struct PCN<NodeId: Eq + Ord + Clone> {
     activation_functions: Vec<ActivationFn>,
@@ -48,23 +48,21 @@ impl<NodeId: Eq + Ord + Clone + Debug> Debug for PCN<NodeId> {
         f.debug_map()
             .entries(self.nodes_map.iter().map(|(k, v)| {
                 (
-                    k, 
+                    k,
                     NodeData {
                         values: &self.node_values[*v],
                         predictions: &self.node_predictions[*v],
                         errors: &self.node_errors[*v],
-                    }
-                 )
+                    },
+                )
             }))
             .finish()?;
 
         f.debug_list()
-            .entries(self.edges.iter().map(|e| {
-                EdgeData {
-                    source: self.reverse_lookup_node(e.source),
-                    target: self.reverse_lookup_node(e.target),
-                    matrix: e.weight_matrix,
-                }
+            .entries(self.edges.iter().map(|e| EdgeData {
+                source: self.reverse_lookup_node(e.source),
+                target: self.reverse_lookup_node(e.target),
+                matrix: e.weight_matrix,
             }))
             .finish()?;
 
@@ -148,21 +146,20 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     }
 
     // TODO use Xavier uniform distribution (or normal dist - find out which one fits)
-    pub fn randomize_weights<R: Rng>(&mut self, rng: &mut R) {
+    pub fn randomize_weights_uniform<R: Rng>(&mut self, rng: &mut R) {
         // Using uniform Xavier initialization. see
         // https://www.geeksforgeeks.org/deep-learning/xavier-initialization/
 
         for weight_matrix in self.weight_matrices.iter_mut() {
-            let x = (6. / (weight_matrix.rows() + weight_matrix.cols()) as f64).sqrt();
-            weight_matrix.randomize(x, rng);
+            weight_matrix.randomize_xavier_uniform(rng);
         }
     }
 
-    pub fn randomize_weights_normal<R: Rng>(&mut self, _rng: &mut R) {
+    pub fn randomize_weights_normal<R: Rng>(&mut self, rng: &mut R) {
         // Using normal Xavier initialization
 
         for weight_matrix in self.weight_matrices.iter_mut() {
-            todo!()
+            weight_matrix.randomize_xavier_normal(rng);
         }
     }
 
@@ -195,11 +192,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
                     .zip(prediction.0.as_ref());
 
                 for ((e, v), p) in inner_iter {
-                    let err = if node_type.is_label() { 
-                        p - v 
-                    } else { 
-                        v - p 
-                    };
+                    let err = if node_type.is_label() { p - v } else { v - p };
                     *e = err;
                     error_square_sum += err * err;
                 }
@@ -287,7 +280,12 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
 
         self.compute_gain_modulated_errors();
 
-        for ((e, v), t) in self.node_errors.iter().zip(self.node_values.iter_mut()).zip(self.node_types.iter()) {
+        for ((e, v), t) in self
+            .node_errors
+            .iter()
+            .zip(self.node_values.iter_mut())
+            .zip(self.node_types.iter())
+        {
             if t.update_values() {
                 scale_sub_inplace(gamma, e.0.as_ref(), v.0.as_mut());
             }

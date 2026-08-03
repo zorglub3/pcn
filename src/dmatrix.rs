@@ -1,7 +1,8 @@
 use rand::Rng;
 use rand::RngExt;
+use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Formatter, Error as FmtError};
+use std::fmt::{Debug, Error as FmtError, Formatter};
 use std::ops::{AddAssign, Index, IndexMut, Mul, Range};
 
 /// A Dense matrix with data stored row-wise
@@ -15,9 +16,10 @@ pub struct DMatrix<T> {
 impl<T: Debug> Debug for DMatrix<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         f.debug_map()
-            .entries((0..self.rows).map(|row| {
-                (row, &self.data[(row * self.cols)..((row + 1) * self.cols)])
-            }))
+            .entries(
+                (0..self.rows)
+                    .map(|row| (row, &self.data[(row * self.cols)..((row + 1) * self.cols)])),
+            )
             .finish()
     }
 }
@@ -250,6 +252,7 @@ impl DMatrix<f64> {
     /// Randomize the values in matrix. Assign a new random value to
     /// each element. The values are uniformly distributed between
     /// minus amount and plus amount (not incl).
+    #[allow(unused)]
     pub fn randomize(&mut self, amount: f64, rng: &mut impl Rng) {
         if amount <= f64::EPSILON {
             self.data.fill(0.);
@@ -261,10 +264,18 @@ impl DMatrix<f64> {
     }
 
     #[allow(unused)]
-    pub fn randomize_xavier(&mut self, rng: &mut impl Rng) {
+    pub fn randomize_xavier_uniform(&mut self, rng: &mut impl Rng) {
         let amount = (6. / (self.rows() + self.cols()) as f64).sqrt();
         for item in &mut self.data {
             *item = rng.random_range(-amount..amount);
+        }
+    }
+
+    pub fn randomize_xavier_normal(&mut self, rng: &mut impl Rng) {
+        let d = (2. / (self.rows() + self.cols()) as f64).sqrt();
+        let dist = Normal::new(0., d).unwrap();
+        for item in &mut self.data {
+            *item = dist.sample(rng);
         }
     }
 }
