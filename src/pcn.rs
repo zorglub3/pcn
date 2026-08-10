@@ -145,19 +145,13 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
         panic!("node index {} not in PCN", node_index);
     }
 
-    // TODO use Xavier uniform distribution (or normal dist - find out which one fits)
     pub fn randomize_weights_uniform<R: Rng>(&mut self, rng: &mut R) {
-        // Using uniform Xavier initialization. see
-        // https://www.geeksforgeeks.org/deep-learning/xavier-initialization/
-
         for weight_matrix in self.weight_matrices.iter_mut() {
             weight_matrix.randomize_xavier_uniform(rng);
         }
     }
 
     pub fn randomize_weights_normal<R: Rng>(&mut self, rng: &mut R) {
-        // Using normal Xavier initialization
-
         for weight_matrix in self.weight_matrices.iter_mut() {
             weight_matrix.randomize_xavier_normal(rng);
         }
@@ -197,8 +191,6 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
                     error_square_sum += err * err;
                 }
             }
-
-            // println!("::: errors {:?}", error.0.as_ref());
         }
 
         error_square_sum
@@ -207,25 +199,16 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     pub fn inference_steps(&mut self, gamma: f64, n: usize) -> f64 {
         let mut err = 0.;
 
-        // println!("start inference: {} steps", n);
-
         for _i in 0..n {
             self.compute_predictions();
             err = self.compute_errors();
             self.compute_values(gamma);
-
-            // println!("---> error: {}", err);
         }
-
-        // println!("==> inference done. Final error: {}", err);
 
         err
     }
 
     pub fn compute_predictions(&mut self) {
-        // TODO Not just nodes of "Label" type should not update predictions
-        //  Also nodes with no incoming edges - their predictions will otherwise be
-        //  zero with no way to change.
         for (prediction, node_type) in self.node_predictions.iter_mut().zip(&self.node_types) {
             if node_type.update_predictions() {
                 prediction.0.as_mut().fill(0.);
@@ -252,6 +235,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     }
 
     pub fn compute_gain_modulated_errors(&mut self) {
+        // TODO fix computation of gain modulated errors: in case of softmax this is wrong
         for gain_modulated_errors in self.node_gain_modulated_errors.iter_mut() {
             gain_modulated_errors.0.as_mut().fill(0.);
         }
@@ -265,6 +249,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
         }
 
         for (i, gain_modulated_errors) in self.node_gain_modulated_errors.iter_mut().enumerate() {
+            // TODO use diff_inplace_mul here instead of diff_inplace and hadamard_inplace
             self.activation_functions[i].diff_inplace(gain_modulated_errors.0.as_mut());
             hadamard_inplace(
                 self.node_errors[i].0.as_ref(),
