@@ -8,7 +8,7 @@ pub fn max_f64(vs: &[f64]) -> Option<f64> {
     let mut result = None;
     for v in vs {
         if let Some(u) = result {
-            if u > v { 
+            if u > v {
                 result = Some(v);
             }
         }

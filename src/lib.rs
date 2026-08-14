@@ -1,7 +1,7 @@
 mod activation;
 pub mod algorithms;
 pub mod builder;
-mod dmatrix;
+// mod dmatrix;
 mod dvector;
 pub mod patterns;
 pub mod pcn;

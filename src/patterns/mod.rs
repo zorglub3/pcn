@@ -1,5 +1,5 @@
-mod feed_forward;
 mod central_node;
+mod feed_forward;
 
-pub use feed_forward::FeedForward;
 pub use central_node::CentralNode;
+pub use feed_forward::FeedForward;

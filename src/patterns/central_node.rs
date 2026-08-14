@@ -1,5 +1,5 @@
-use crate::builder::Builder;
 use crate::activation::ActivationFn;
+use crate::builder::Builder;
 
 pub trait CentralNode<NodeId: Eq + Ord + Clone> {
     fn add_central_node(self, node_size: usize, sensors: &[NodeId], labels: &[NodeId]) -> Self;

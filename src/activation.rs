@@ -1,6 +1,6 @@
-use serde::{Deserialize, Serialize};
 use crate::dvector::eval_inplace;
 use crate::dvector::max_f64;
+use serde::{Deserialize, Serialize};
 
 #[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum ActivationFn {
@@ -30,7 +30,7 @@ impl ActivationFn {
                     eval_inplace(|v| (v - d).exp() / h, values);
                 }
             }
-            Linear => { /* do nothing */ },
+            Linear => { /* do nothing */ }
         }
     }
 
@@ -70,8 +70,20 @@ impl ActivationFn {
         use ActivationFn::*;
 
         match self {
-            Tanh => eval_inplace(|v| { let x = v.tanh(); 1. - x * x }, values),
-            Logistic => eval_inplace(|v| { let x = 1. / (1. + (-v).exp()); x * (1. - x) }, values),
+            Tanh => eval_inplace(
+                |v| {
+                    let x = v.tanh();
+                    1. - x * x
+                },
+                values,
+            ),
+            Logistic => eval_inplace(
+                |v| {
+                    let x = 1. / (1. + (-v).exp());
+                    x * (1. - x)
+                },
+                values,
+            ),
             ReLu => eval_inplace(|v| if v < 0. { 0. } else { 1. }, values),
             LeakyReLu(a) => eval_inplace(|v| if v < a * v { *a } else { 1. }, values),
             SoftPlus => eval_inplace(|v| 1. / (1. + (-v).exp()), values),

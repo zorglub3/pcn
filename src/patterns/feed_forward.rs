@@ -1,12 +1,22 @@
-use crate::builder::Builder;
 use crate::activation::ActivationFn;
+use crate::builder::Builder;
 
 pub trait FeedForward<NodeId: Eq + Ord + Clone> {
-    fn add_feed_forward(self, sensor_node: NodeId, label_node: NodeId, hidden_layer_sizes: &[usize]) -> Self;
+    fn add_feed_forward(
+        self,
+        sensor_node: NodeId,
+        label_node: NodeId,
+        hidden_layer_sizes: &[usize],
+    ) -> Self;
 }
 
 impl<NodeId: Eq + Ord + Clone> FeedForward<NodeId> for Builder<NodeId> {
-    fn add_feed_forward(self, sensor_node: NodeId, label_node: NodeId, hidden_layer_sizes: &[usize]) -> Self {
+    fn add_feed_forward(
+        self,
+        sensor_node: NodeId,
+        label_node: NodeId,
+        hidden_layer_sizes: &[usize],
+    ) -> Self {
         let mut hidden_nodes = Vec::new();
         let mut builder = self;
 
