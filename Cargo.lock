@@ -35,6 +35,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dense_matrix"
+version = "0.1.0"
+dependencies = [
+ "rand",
+ "rand_distr",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -72,6 +80,8 @@ dependencies = [
 name = "pcn"
 version = "0.1.0"
 dependencies = [
+ "dense_matrix",
+ "num-traits",
  "rand",
  "rand_distr",
  "serde",

@@ -3,36 +3,42 @@
 //! by Mikko Stenlund.
 
 use crate::activation::ActivationFn;
-use crate::dmatrix::DMatrix;
-use crate::dvector::hadamard_inplace;
-use crate::dvector::randomize_vec;
-use crate::dvector::scale_sub_inplace;
+// use crate::dmatrix::DMatrix;
+// use crate::dvector::hadamard_inplace;
+// use crate::dvector::randomize_vec;
+// use crate::dvector::scale_sub_inplace;
+// #
+use dense_matrix::RowWise;
+use dense_matrix::Symmetric;
+use dense_matrix::Matrix;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Error as FmtError, Formatter};
+use std::iter::Sum;
+use std::ops::{AddAssign, Mul, MulAssign};
 
-pub struct PCN<NodeId: Eq + Ord + Clone> {
-    activation_functions: Vec<ActivationFn>,
-    node_values: Vec<NodeValues>,
-    node_predictions: Vec<NodePredictions>,
-    node_gain_modulated_errors: Vec<NodePredictionDiffs>,
-    node_errors: Vec<NodeErrors>,
+pub struct PCN<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> {
+    activation_functions: Vec<A>,
+    node_values: Vec<NodeValues<N>>,
+    node_predictions: Vec<NodePredictions<N>>,
+    node_gain_modulated_errors: Vec<GainModulatedErrors<N>>,
+    node_errors: Vec<NodeErrors<N>>,
     node_sizes: Vec<usize>,
     node_types: Vec<NodeType>,
     node_in_degree: Vec<usize>,
     node_out_degree: Vec<usize>,
     next_node_index: usize,
-    weight_matrices: Vec<DMatrix<f64>>,
+    weight_matrices: Vec<WeightMatrix<N>>,
     edges: Vec<Edge>,
     nodes_map: BTreeMap<NodeId, NodeIndex>,
 }
 
 #[derive(Debug)]
 #[allow(dead_code)]
-struct NodeData<'a> {
-    values: &'a NodeValues,
-    predictions: &'a NodePredictions,
-    errors: &'a NodeErrors,
+struct NodeData<'a, N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug> {
+    values: &'a NodeValues<N>,
+    predictions: &'a NodePredictions<N>,
+    errors: &'a NodeErrors<N>,
 }
 
 #[derive(Debug)]
@@ -43,7 +49,7 @@ struct EdgeData<'a, NodeId: Debug> {
     matrix: usize,
 }
 
-impl<NodeId: Eq + Ord + Clone + Debug> Debug for PCN<NodeId> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone + Debug> Debug for PCN<N, A, NodeId> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         f.debug_map()
             .entries(self.nodes_map.iter().map(|(k, v)| {
@@ -74,7 +80,7 @@ impl<NodeId: Eq + Ord + Clone + Debug> Debug for PCN<NodeId> {
     }
 }
 
-impl<NodeId: Eq + Ord + Clone> Default for PCN<NodeId> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> Default for PCN<NodeId> {
     fn default() -> Self {
         Self {
             activation_functions: Vec::new(),
@@ -94,7 +100,7 @@ impl<NodeId: Eq + Ord + Clone> Default for PCN<NodeId> {
     }
 }
 
-impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> PCN<NodeId> {
     pub fn add_node(&mut self, id: &NodeId, activation_function: ActivationFn, size: usize) {
         debug_assert!(!self.nodes_map.contains_key(id));
 
@@ -124,7 +130,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
 
         let source_size = self.node_sizes[*source];
         let target_size = self.node_sizes[*target];
-        let weight_matrix = DMatrix::new(target_size, source_size, 0.);
+        let weight_matrix = RowWise::new(target_size, source_size);
         let weight_matrix_index = self.weight_matrices.len();
 
         self.node_in_degree[*target] += 1;
@@ -163,7 +169,7 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
         }
     }
 
-    pub fn compute_errors(&mut self) -> f64 {
+    pub fn compute_errors(&mut self) {
         // TODO node with no incoming edges has not predictions and thus no intrinsic error
         let mut error_square_sum = 0.;
 
@@ -179,6 +185,8 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             if *node_in_degree == 0 {
                 error.0.as_mut().fill(0.);
             } else {
+                error.compute(node_type, value, prediction);
+                /*
                 let inner_iter = error
                     .0
                     .iter_mut()
@@ -190,10 +198,11 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
                     *e = err;
                     error_square_sum += err * err;
                 }
+                */
             }
         }
 
-        error_square_sum
+        // error_square_sum
     }
 
     pub fn inference_steps(&mut self, gamma: f64, n: usize) -> f64 {
@@ -211,23 +220,26 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     pub fn compute_predictions(&mut self) {
         for (prediction, node_type) in self.node_predictions.iter_mut().zip(&self.node_types) {
             if node_type.update_predictions() {
-                prediction.0.as_mut().fill(0.);
+                prediction.set_to_default();
+                // prediction.0.as_mut().fill(0.);
             }
         }
 
         for edge in self.edges.iter() {
-            let matrix = &self.weight_matrices[edge.weight_matrix];
-            let source = self.node_values[edge.source].0.as_ref();
-            let target = self.node_predictions[edge.target].0.as_mut();
+            let weights = &self.weight_matrices[edge.weight_matrix];
+            let source = &self.node_values[edge.source];
+            let target = &self.node_predictions[edge.target];
 
             if self.node_types[edge.target].update_predictions() {
-                matrix.mul_vec_add(source, target);
+                target.add_weighted_input(weights, source);
+                // matrix.mul_vec_add(source, target);
             }
         }
 
         for (i, prediction) in self.node_predictions.iter_mut().enumerate() {
             if self.node_types[i].update_predictions() {
-                self.activation_functions[i].eval_inplace(prediction.0.as_mut());
+                prediction.apply_activation_function(self.activation_functions[i]);
+                // self.activation_functions[i].eval_inplace(prediction.0.as_mut());
 
                 // println!("::: predictions({}) {:?}", i, prediction.0.as_ref());
             }
@@ -237,24 +249,27 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
     pub fn compute_gain_modulated_errors(&mut self) {
         // TODO fix computation of gain modulated errors: in case of softmax this is wrong
         for gain_modulated_errors in self.node_gain_modulated_errors.iter_mut() {
-            gain_modulated_errors.0.as_mut().fill(0.);
+            gain_modulated_errors.set_to_default();
+            // gain_modulated_errors.0.as_mut().fill(0.);
         }
 
         for edge in self.edges.iter() {
-            let matrix = &self.weight_matrices[edge.weight_matrix];
-            let source = self.node_values[edge.source].0.as_ref();
-            let target = self.node_gain_modulated_errors[edge.target].0.as_mut();
+            let weights = &self.weight_matrices[edge.weight_matrix];
+            let source = &self.node_values[edge.source];
+            let target = &self.node_gain_modulated_errors[edge.target];
 
-            matrix.mul_vec_add(source, target);
+            target.add_weighted_input(weights, source);
+            // matrix.mul_vec_add(source, target);
         }
 
         for (i, gain_modulated_errors) in self.node_gain_modulated_errors.iter_mut().enumerate() {
+            gain_modulated_errors.compute(&self.activation_functions[i], &self.node_errors[i]);
             // TODO use diff_inplace_mul here instead of diff_inplace and hadamard_inplace
-            self.activation_functions[i].diff_inplace(gain_modulated_errors.0.as_mut());
-            hadamard_inplace(
-                self.node_errors[i].0.as_ref(),
-                gain_modulated_errors.0.as_mut(),
-            );
+            // self.activation_functions[i].diff_inplace(gain_modulated_errors.0.as_mut());
+            // hadamard_inplace(
+                // self.node_errors[i].0.as_ref(),
+                // gain_modulated_errors.0.as_mut(),
+            // );
 
             // println!("::: gain modulated errors({}) {:?}", i, gain_modulated_errors.0.as_ref());
         }
@@ -272,18 +287,20 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
             .zip(self.node_types.iter())
         {
             if t.update_values() {
-                scale_sub_inplace(gamma, e.0.as_ref(), v.0.as_mut());
+                v.update_with_local_errors(gamma, e);
+                // scale_sub_inplace(gamma, e.0.as_ref(), v.0.as_mut());
             }
         }
 
         for edge in self.edges.iter() {
             let w = &self.weight_matrices[edge.weight_matrix];
-            let gme = self.node_gain_modulated_errors[edge.target].0.as_ref();
-            let v = self.node_values[edge.source].0.as_mut();
+            let gme = &self.node_gain_modulated_errors[edge.target];
+            let v = &self.node_values[edge.source];
             let t = &self.node_types[edge.source];
 
             if t.update_values() {
-                w.trans_mul_vec_add_scale(gamma, gme, v);
+                v.update_with_gain_modulated_errors(gamma, w, gme);
+                // w.trans_mul_vec_add_scale(gamma, gme, v);
             }
         }
 
@@ -374,69 +391,118 @@ impl<NodeId: Eq + Ord + Clone> PCN<NodeId> {
 }
 
 type NodeIndex = usize;
+type WeightMatrixIndex = usize;
 
-struct NodeValues(Box<[f64]>);
+struct NodeValues<N>(Box<[N]>);
 
-impl Debug for NodeValues {
+impl<N: Debug> Debug for NodeValues<N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         f.debug_list().entries(self.0.as_ref()).finish()
     }
 }
 
-impl NodeValues {
+impl<N: Default + Clone> NodeValues<N> {
     fn new(size: usize) -> Self {
-        Self(vec![0.; size].into_boxed_slice())
+        Self(vec![Default::default(); size].into_boxed_slice())
+    }
+
+    fn update_with_local_errors(&mut self, gamma: N, local_errors: &NodeErrors<N>) {
+        scale_sub_inplace(gamma, local_errors.0.as_ref(), self.0.as_mut());
+    }
+
+    fn update_with_gain_modulated_errors(&mut self, gamma: N, weights: WeightMatrix<N>, gain_modulated_errors: &GainModulatedErrors) {
+        weights.matrix().trans_mul_vec_add_scale(gamma, gain_modulated_errors, self.0.as_mut()); 
     }
 }
 
-struct NodePredictions(Box<[f64]>);
+struct NodePredictions<N>(Box<[N]>);
 
-impl NodePredictions {
+impl<N: Default + Clone> NodePredictions<N> {
     fn new(size: usize) -> Self {
-        Self(vec![0.; size].into_boxed_slice())
+        Self(vec![Default::default(); size].into_boxed_slice())
+    }
+
+    fn set_to_default(&mut self) {
+        self.0.fill(Default::default());
+    }
+
+    fn add_weighted_input(&mut self, weights: &WeightMatrix<N>, source: &NodeValues) {
+        weights.matrix().mul_vec_add(source.0, self.0.as_mut());
+    }
+
+    fn apply_activation_function<A: ActivationFn<N>>(&mut self, activation_function: &A) {
+        activation_function.eval_inplace(self.0.as_mut());
     }
 }
 
-impl Debug for NodePredictions {
+impl<N: Debug> Debug for NodePredictions<N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         f.debug_list().entries(self.0.as_ref()).finish()
     }
 }
 
-struct NodePredictionDiffs(Box<[f64]>);
+struct GainModulatedErrors<N>(Box<[N]>);
 
-impl NodePredictionDiffs {
+impl<N: Default + Clone> GainModulatedErrors<N> {
     fn new(size: usize) -> Self {
-        Self(vec![0.; size].into_boxed_slice())
+        Self(vec![Default::default(); size].into_boxed_slice())
+    }
+
+    fn set_to_default(&mut self) {
+        self.0.as_mut().fill(Default::default());
     }
 }
 
-struct NodeErrors(Box<[f64]>);
+impl<N: AddAssign + Copy> GainModulatedErrors<N> {
+    fn add_weighted_input(&mut self, weights: WeightMatrix<N>, source: &NodeValues<N>) {
+        weights.matrix().mul_vec_add(source, self.0);
+    }
 
-impl Debug for NodeErrors {
+    fn compute(&mut self, activation_function: &ActivationFn<N>, errors: &NodeErrors<N>) {
+        activation_function.diff_inplace_mul(errors.0.as_ref(), self.0.as_mut());
+    }
+} 
+
+struct NodeErrors<N>(Box<[N]>);
+
+impl<N: Debug> Debug for NodeErrors<N> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         f.debug_list().entries(self.0.as_ref()).finish()
     }
 }
 
-impl NodeErrors {
+impl<N: Default + Clone> NodeErrors<N> {
     fn new(size: usize) -> Self {
         Self(vec![0.; size].into_boxed_slice())
+    }
+}
+
+impl<N: Sub<Output = N> + Copy> NodeErrors<N> {
+    fn compute(&mut self, node_type: NodeType, values: &NodeValues<N>, predictions: &NodePredictions<N>) {
+        if node_type.is_label() {
+            for ((v, p), e) in values.iter().zip(predictions.iter()).zip(self.iter_mut()) {
+                *e = p - v;
+            }
+        } else {
+            for ((v, p), e) in values.iter().zip(predictions.iter()).zip(self.iter_mut()) {
+                *e = v - p;
+            }
+        }
     }
 }
 
 struct Edge {
     source: NodeIndex,
     target: NodeIndex,
-    weight_matrix: usize,
+    weight_matrix_index: usize,
 }
 
 impl Edge {
-    fn new(source: NodeIndex, target: NodeIndex, weight_matrix: usize) -> Self {
+    fn new(source: NodeIndex, target: NodeIndex, weight_matrix_index: usize) -> Self {
         Self {
             source,
             target,
-            weight_matrix,
+            weight_matrix_index,
         }
     }
 }
@@ -460,5 +526,27 @@ impl NodeType {
 
     pub fn update_values(&self) -> bool {
         *self == Self::Internal
+    }
+}
+
+enum WeightMatrix<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy> {
+    LayerWeights(Box<RowWise<N>>),
+    HopfieldWeights(Box<Symmetric<N>>),
+}
+
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy> WeightMatrix<N> {
+    fn matrix(&self) -> &dyn Matrix<N> {
+        match self {
+            LayerWeights(matrix) => matrix,
+            HopfieldWeights(matrix) => matrix,
+        }
+    }
+
+    fn learn_hebb(&mut self, alpha: N, values: &NodeValues, gain_modulated_errors: &GainModulatedErrors) {
+        let values = values.as_column_vec();
+        let gme = gain_modulated_errors.as_row_vec();
+        let delta = values * gme;
+
+        todo!()
     }
 }

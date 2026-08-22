@@ -1,8 +1,8 @@
 mod activation;
-pub mod algorithms;
+// pub mod algorithms;
 pub mod builder;
 // mod dmatrix;
-mod dvector;
+// mod dvector;
 pub mod patterns;
 pub mod pcn;
 mod util;

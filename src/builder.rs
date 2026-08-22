@@ -1,10 +1,12 @@
 use crate::activation::ActivationFn;
 use crate::pcn::*;
+use std::marker::PhantomData;
 
-struct NodeSpec<Id: Eq + Ord> {
+struct NodeSpec<Id: Eq + Ord, N, A: ActivationFn<N>> {
     id: Id,
     size: usize,
-    activation_function: ActivationFn,
+    activation_function: A,
+    phantom: PhantomData<N>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -13,13 +15,13 @@ struct EdgeSpec<Id: Eq + Ord> {
     target: Id,
 }
 
-pub struct Builder<Id: Eq + Ord + Clone> {
-    nodes: Vec<NodeSpec<Id>>,
+pub struct Builder<Id: Eq + Ord + Clone, N, A: ActivationFn<N>> {
+    nodes: Vec<NodeSpec<Id, N, A>>,
     edges: Vec<EdgeSpec<Id>>,
     node_id_source: Option<Box<dyn IdSource<Id>>>,
 }
 
-impl<Id: Eq + Ord + Clone> Default for Builder<Id> {
+impl<Id: Eq + Ord + Clone, N, A: ActivationFn<N>> Default for Builder<Id, N, A> {
     fn default() -> Self {
         Self {
             nodes: Vec::new(),
@@ -30,7 +32,7 @@ impl<Id: Eq + Ord + Clone> Default for Builder<Id> {
 }
 
 #[allow(unused)]
-impl<Id: Eq + Ord + Clone> Builder<Id> {
+impl<Id: Eq + Ord + Clone, N, A: ActivationFn<N>> Builder<Id, N, A> {
     pub fn with_generator(mut self, node_id_source: Box<dyn IdSource<Id>>) -> Self {
         self.node_id_source = Some(node_id_source);
         self
@@ -45,13 +47,14 @@ impl<Id: Eq + Ord + Clone> Builder<Id> {
         self.nodes.iter().any(|node_spec| node_spec.id == *id)
     }
 
-    pub fn add_node(mut self, id: Id, activation_function: ActivationFn, size: usize) -> Self {
+    pub fn add_node(mut self, id: Id, activation_function: A, size: usize) -> Self {
         debug_assert!(!self.has_node(&id));
 
         self.nodes.push(NodeSpec {
             id,
             size,
             activation_function,
+            phantom: PhantomData,
         });
         self
     }

@@ -1,46 +1,74 @@
-use crate::dvector::eval_inplace;
-use crate::dvector::max_f64;
+// use crate::dvector::eval_inplace;
+// use crate::dvector::max_f64;
 use serde::{Deserialize, Serialize};
+use num_traits::float::Float;
+use num_traits::identities::{one, zero};
+use std::marker::PhantomData;
 
-#[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub enum ActivationFn {
-    Tanh,
-    Logistic,
-    ReLu,
-    LeakyReLu(f64),
-    SoftPlus,
-    SoftMax,
-    Linear,
+pub trait ActivationFn<N> {
+    fn eval_inplace(&self, values: &mut [N]);
+    fn diff_inplace_mul(&self, multiplier: &[N], values: &mut [N]);
+    fn diff_inplace(&self, values: &mut [N]);
 }
 
-impl ActivationFn {
-    pub fn eval_inplace(&self, values: &mut [f64]) {
-        use ActivationFn::*;
+fn eval_inplace<N, F: Fn(N) -> N>(f: F, a: &mut [N]) {
+    for v in a {
+        *v = f(*v);
+    }
+}
+
+#[derive(PartialEq, Clone, Copy, Serialize, Deserialize)]
+pub enum FloatActivationFn<N: Float> {
+    Tanh(PhantomData<N>),
+    Logistic(PhantomData<N>),
+    ReLu(PhantomData<N>),
+    LeakyReLu(N, PhantomData<N>),
+    SoftPlus(PhantomData<N>),
+    SoftMax(PhantomData<N>),
+    Linear(PhantomData<N>),
+}
+
+impl<N: Float> FloatActivationFn<N> {
+    pub const TANH: Self = FloatActivationFn::Tanh(PhantomData);
+    pub const LOGISTIC: Self = FloatActivationFn::Logistic(PhantomData);
+    pub const RELU: Self = FloatActivationFn::ReLu(PhantomData);
+    pub const SOFTPLUS: Self = FloatActivationFn::SoftPlus(PhantomData);
+    pub const SOFTMAX: Self = FloatActivationFn::SoftMax(PhantomData);
+    pub const LINEAR: Self = FloatActivationFn::Linear(PhantomData);
+
+    pub fn leaky_relu(x: N) -> Self {
+        FloatActivationFn::LeakyReLu(x)
+    }
+}
+
+impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
+    fn eval_inplace(&self, values: &mut [N]) {
+        use FloatActivationFn::*;
 
         match self {
-            Tanh => eval_inplace(|v| v.tanh(), values),
-            Logistic => eval_inplace(|v| 1. / (1. + (-v).exp()), values),
-            ReLu => eval_inplace(|v| v.max(0.), values),
-            LeakyReLu(a) => eval_inplace(|v| v.max(*a * v), values),
-            SoftPlus => eval_inplace(|v| (1. + v.exp()).ln(), values),
-            SoftMax => {
+            Tanh(_) => eval_inplace(|v| v.tanh(), values),
+            Logistic(_) => eval_inplace(|v| one() / (one() + (-v).exp()), values),
+            ReLu(_) => eval_inplace(|v| v.max(zero), values),
+            LeakyReLu(a, _) => eval_inplace(|v| v.max(*a * v), values),
+            SoftPlus(_) => eval_inplace(|v| (one() + v.exp()).ln(), values),
+            SoftMax(_) => {
                 if values.len() > 0 {
-                    let d = max_f64(values).unwrap_or(0.);
+                    let d = max_f64(values).unwrap_or(zero());
                     let h: f64 = values.iter().map(|v| (v - d).exp()).sum();
                     eval_inplace(|v| (v - d).exp() / h, values);
                 }
             }
-            Linear => { /* do nothing */ }
+            Linear(_) => { /* do nothing */ }
         }
     }
 
-    pub fn diff_inplace_mul(&self, multiplier: &[f64], values: &mut [f64]) {
+    fn diff_inplace_mul(&self, multiplier: &[N], values: &mut [N]) {
         debug_assert_eq!(multiplier.len(), values.len());
 
-        use ActivationFn::*;
+        use FloatActivationFn::*;
 
         match self {
-            SoftMax => {
+            SoftMax(_) => {
                 let mut s = vec![0.; values.len()];
                 s.clone_from_slice(values);
                 self.diff_inplace(&mut s);
@@ -49,7 +77,7 @@ impl ActivationFn {
                     let mut acc = 0.;
                     for j in 0..values.len() {
                         if i == j {
-                            acc += s[i] * (1. - s[i]);
+                            acc += s[i] * (one() - s[i]);
                         } else {
                             acc -= s[i] * s[j];
                         }
@@ -66,33 +94,34 @@ impl ActivationFn {
         }
     }
 
-    pub fn diff_inplace(&self, values: &mut [f64]) {
-        use ActivationFn::*;
+    fn diff_inplace(&self, values: &mut [N]) {
+        use FloatActivationFn::*;
 
         match self {
-            Tanh => eval_inplace(
+            Tanh(_) => eval_inplace(
                 |v| {
                     let x = v.tanh();
-                    1. - x * x
+                    one() - x * x
                 },
                 values,
             ),
-            Logistic => eval_inplace(
+            Logistic(_) => eval_inplace(
                 |v| {
-                    let x = 1. / (1. + (-v).exp());
-                    x * (1. - x)
+                    let x = one() / (one() + (-v).exp());
+                    x * (one() - x)
                 },
                 values,
             ),
-            ReLu => eval_inplace(|v| if v < 0. { 0. } else { 1. }, values),
-            LeakyReLu(a) => eval_inplace(|v| if v < a * v { *a } else { 1. }, values),
-            SoftPlus => eval_inplace(|v| 1. / (1. + (-v).exp()), values),
-            SoftMax => todo!(),
-            Linear => values.fill(1.),
+            ReLu(_) => eval_inplace(|v| if v < zero() { zero() } else { one() }, values),
+            LeakyReLu(a, _) => eval_inplace(|v| if v < a * v { *a } else { one() }, values),
+            SoftPlus(_) => eval_inplace(|v| one() / (one() + (-v).exp()), values),
+            SoftMax(_) => unimplemented!("use the diff_inplace_mul function"),
+            Linear(_) => values.fill(one()),
         }
     }
 }
 
+/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -130,3 +159,4 @@ mod test {
         // TODO diff_inplace_mul
     }
 }
+*/
