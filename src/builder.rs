@@ -90,7 +90,7 @@ impl<Id: Eq + Ord + Clone, N, A: ActivationFn<N>> Builder<Id, N, A> {
         todo!()
     }
 
-    pub fn build(self) -> PCN<Id> {
+    pub fn build(self) -> PCN<N, A, Id> {
         let mut pcn: PCN<Id> = PCN::default();
 
         for node in &self.nodes {

@@ -3,7 +3,7 @@ mod activation;
 pub mod builder;
 // mod dmatrix;
 // mod dvector;
-pub mod patterns;
+// pub mod patterns;
 pub mod pcn;
 mod util;
 

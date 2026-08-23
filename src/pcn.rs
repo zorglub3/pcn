@@ -11,11 +11,13 @@ use crate::activation::ActivationFn;
 use dense_matrix::RowWise;
 use dense_matrix::Symmetric;
 use dense_matrix::Matrix;
+use dense_matrix::RowVector;
+use dense_matrix::ColumnVector;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Error as FmtError, Formatter};
 use std::iter::Sum;
-use std::ops::{AddAssign, Mul, MulAssign};
+use std::ops::{AddAssign, Mul, MulAssign, Sub};
 
 pub struct PCN<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> {
     activation_functions: Vec<A>,
@@ -80,7 +82,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
     }
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> Default for PCN<NodeId> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> Default for PCN<N, A, NodeId> {
     fn default() -> Self {
         Self {
             activation_functions: Vec::new(),
@@ -100,8 +102,8 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
     }
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> PCN<NodeId> {
-    pub fn add_node(&mut self, id: &NodeId, activation_function: ActivationFn, size: usize) {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> PCN<N, A, NodeId> {
+    pub fn add_node(&mut self, id: &NodeId, activation_function: A, size: usize) {
         debug_assert!(!self.nodes_map.contains_key(id));
 
         let node_index = self.next_node_index;
@@ -111,7 +113,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
         self.node_values.push(NodeValues::new(size));
         self.node_predictions.push(NodePredictions::new(size));
         self.node_gain_modulated_errors
-            .push(NodePredictionDiffs::new(size));
+            .push(GainModulatedErrors::new(size));
         self.node_errors.push(NodeErrors::new(size));
         self.node_sizes.push(size);
         self.node_types.push(Default::default());
@@ -151,6 +153,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
         panic!("node index {} not in PCN", node_index);
     }
 
+    /*
     pub fn randomize_weights_uniform<R: Rng>(&mut self, rng: &mut R) {
         for weight_matrix in self.weight_matrices.iter_mut() {
             weight_matrix.randomize_xavier_uniform(rng);
@@ -168,6 +171,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
             randomize_vec(1., node_value.0.as_mut(), rng);
         }
     }
+    */
 
     pub fn compute_errors(&mut self) {
         // TODO node with no incoming edges has not predictions and thus no intrinsic error
@@ -407,11 +411,18 @@ impl<N: Default + Clone> NodeValues<N> {
     }
 
     fn update_with_local_errors(&mut self, gamma: N, local_errors: &NodeErrors<N>) {
-        scale_sub_inplace(gamma, local_errors.0.as_ref(), self.0.as_mut());
+        for (v, e) in self.0.iter_mut().zip(local_errors.0.as_ref()) {
+            *v -= gamma * *e;
+        }
+        // scale_sub_inplace(gamma, local_errors.0.as_ref(), self.0.as_mut());
     }
 
-    fn update_with_gain_modulated_errors(&mut self, gamma: N, weights: WeightMatrix<N>, gain_modulated_errors: &GainModulatedErrors) {
+    fn update_with_gain_modulated_errors(&mut self, gamma: N, weights: WeightMatrix<N>, gain_modulated_errors: &GainModulatedErrors<N>) {
         weights.matrix().trans_mul_vec_add_scale(gamma, gain_modulated_errors, self.0.as_mut()); 
+    }
+
+    fn as_column_vec(&self) -> ColumnVector<'_, N> {
+        ColumnVector::new(self.0)
     }
 }
 
@@ -426,7 +437,7 @@ impl<N: Default + Clone> NodePredictions<N> {
         self.0.fill(Default::default());
     }
 
-    fn add_weighted_input(&mut self, weights: &WeightMatrix<N>, source: &NodeValues) {
+    fn add_weighted_input(&mut self, weights: &WeightMatrix<N>, source: &NodeValues<N>) {
         weights.matrix().mul_vec_add(source.0, self.0.as_mut());
     }
 
@@ -451,6 +462,10 @@ impl<N: Default + Clone> GainModulatedErrors<N> {
     fn set_to_default(&mut self) {
         self.0.as_mut().fill(Default::default());
     }
+
+    fn as_row_vec<'a>(&'a self) -> RowVector<'a, N> {
+        RowVector::new(self.0)
+    }
 }
 
 impl<N: AddAssign + Copy> GainModulatedErrors<N> {
@@ -458,7 +473,7 @@ impl<N: AddAssign + Copy> GainModulatedErrors<N> {
         weights.matrix().mul_vec_add(source, self.0);
     }
 
-    fn compute(&mut self, activation_function: &ActivationFn<N>, errors: &NodeErrors<N>) {
+    fn compute<A: ActivationFn<N>>(&mut self, activation_function: &A, errors: &NodeErrors<N>) {
         activation_function.diff_inplace_mul(errors.0.as_ref(), self.0.as_mut());
     }
 } 
@@ -507,7 +522,7 @@ impl Edge {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
 pub enum NodeType {
     #[default]
     Internal,
@@ -537,12 +552,12 @@ enum WeightMatrix<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + C
 impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy> WeightMatrix<N> {
     fn matrix(&self) -> &dyn Matrix<N> {
         match self {
-            LayerWeights(matrix) => matrix,
-            HopfieldWeights(matrix) => matrix,
+            WeightMatrix::LayerWeights(matrix) => matrix,
+            WeightMatrix::HopfieldWeights(matrix) => matrix,
         }
     }
 
-    fn learn_hebb(&mut self, alpha: N, values: &NodeValues, gain_modulated_errors: &GainModulatedErrors) {
+    fn learn_hebb(&mut self, alpha: N, values: &NodeValues<N>, gain_modulated_errors: &GainModulatedErrors<N>) {
         let values = values.as_column_vec();
         let gme = gain_modulated_errors.as_row_vec();
         let delta = values * gme;

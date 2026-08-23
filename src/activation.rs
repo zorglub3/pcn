@@ -41,6 +41,20 @@ impl<N: Float> FloatActivationFn<N> {
     }
 }
 
+fn max_float<N: Float>(fs: &[N]) -> Option<N> {
+    let mut res: Option<N> = None;
+
+    for f in fs {
+        match res {
+            None => res = Some(f),
+            Some(v) if v < f => res = Some(f),
+            _ => {}
+        }
+    }
+
+    res
+}
+
 impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
     fn eval_inplace(&self, values: &mut [N]) {
         use FloatActivationFn::*;
@@ -53,8 +67,8 @@ impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
             SoftPlus(_) => eval_inplace(|v| (one() + v.exp()).ln(), values),
             SoftMax(_) => {
                 if values.len() > 0 {
-                    let d = max_f64(values).unwrap_or(zero());
-                    let h: f64 = values.iter().map(|v| (v - d).exp()).sum();
+                    let d = max_float(values).unwrap_or(zero());
+                    let h = values.iter().map(|v| (v - d).exp()).sum();
                     eval_inplace(|v| (v - d).exp() / h, values);
                 }
             }
