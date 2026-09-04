@@ -103,7 +103,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug +
     }
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> PCN<N, A, NodeId> {
+impl<N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> PCN<N, A, NodeId> {
     pub fn add_node(&mut self, id: &NodeId, activation_function: A, size: usize) {
         debug_assert!(!self.nodes_map.contains_key(id));
 
@@ -127,13 +127,14 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug +
     pub fn add_edge(&mut self, source_id: &NodeId, target_id: &NodeId) {
         debug_assert!(self.nodes_map.contains_key(source_id));
         debug_assert!(self.nodes_map.contains_key(target_id));
+        debug_assert!(source_id != target_id);
 
         let source = self.nodes_map.get(source_id).unwrap();
         let target = self.nodes_map.get(target_id).unwrap();
 
         let source_size = self.node_sizes[*source];
         let target_size = self.node_sizes[*target];
-        let weight_matrix = RowWise::new(target_size, source_size);
+        let weight_matrix = WeightMatrix::LayerWeights(Box::new(RowWise::new(target_size, source_size)));
         let weight_matrix_index = self.weight_matrices.len();
 
         self.node_in_degree[*target] += 1;
@@ -188,9 +189,9 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug +
 
         for ((((error, value), prediction), node_type), node_in_degree) in iter {
             if *node_in_degree == 0 {
-                error.0.as_mut().fill(0.);
+                error.0.as_mut().fill(Default::default());
             } else {
-                error.compute(node_type, value, prediction);
+                error.compute(*node_type, value, prediction);
                 /*
                 let inner_iter = error
                     .0
@@ -232,9 +233,9 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug +
         }
 
         for edge in self.edges.iter() {
-            let weights = &self.weight_matrices[edge.weight_matrix];
+            let weights = &self.weight_matrices[edge.weight_matrix_index];
             let source = &self.node_values[edge.source];
-            let target = &self.node_predictions[edge.target];
+            let target = &mut self.node_predictions[edge.target];
 
             if self.node_types[edge.target].update_predictions() {
                 target.add_weighted_input(weights, source);
@@ -260,9 +261,9 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug +
         }
 
         for edge in self.edges.iter() {
-            let weights = &self.weight_matrices[edge.weight_matrix];
+            let weights = &self.weight_matrices[edge.weight_matrix_index];
             let source = &self.node_values[edge.source];
-            let target = &self.node_gain_modulated_errors[edge.target];
+            let target = &mut self.node_gain_modulated_errors[edge.target];
 
             target.add_weighted_input(weights, source);
             // matrix.mul_vec_add(source, target);
@@ -480,7 +481,7 @@ impl<N: Default + Clone> GainModulatedErrors<N> {
 }
 
 impl<N: AddAssign + MulAssign + Mul<Output = N> + Sum + Copy + Default + SubAssign> GainModulatedErrors<N> {
-    fn add_weighted_input(&mut self, weights: WeightMatrix<N>, source: &NodeValues<N>) {
+    fn add_weighted_input(&mut self, weights: &WeightMatrix<N>, source: &NodeValues<N>) {
         weights.matrix().mul_vec_add(source.0.as_ref(), self.0.as_mut());
     }
 

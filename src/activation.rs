@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 use num_traits::float::Float;
 use num_traits::identities::{one, zero};
+use num_traits::One;
 use std::marker::PhantomData;
+use std::ops::MulAssign;
+use std::iter::Sum;
 
 pub trait ActivationFn<N> {
     fn eval_inplace(&self, values: &mut [N]);
@@ -37,7 +40,7 @@ impl<N: Float> FloatActivationFn<N> {
     pub const LINEAR: Self = FloatActivationFn::Linear(PhantomData);
 
     pub fn leaky_relu(x: N) -> Self {
-        FloatActivationFn::LeakyReLu(x)
+        FloatActivationFn::LeakyReLu(x, PhantomData)
     }
 }
 
@@ -46,8 +49,8 @@ fn max_float<N: Float>(fs: &[N]) -> Option<N> {
 
     for f in fs {
         match res {
-            None => res = Some(f),
-            Some(v) if v < f => res = Some(f),
+            None => res = Some(*f),
+            Some(v) if v < *f => res = Some(*f),
             _ => {}
         }
     }
@@ -55,20 +58,20 @@ fn max_float<N: Float>(fs: &[N]) -> Option<N> {
     res
 }
 
-impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
+impl<N: Float + MulAssign + One + Clone + Sum + Default> ActivationFn<N> for FloatActivationFn<N> {
     fn eval_inplace(&self, values: &mut [N]) {
         use FloatActivationFn::*;
 
         match self {
             Tanh(_) => eval_inplace(|v| v.tanh(), values),
             Logistic(_) => eval_inplace(|v| one() / (one() + (-v).exp()), values),
-            ReLu(_) => eval_inplace(|v| v.max(zero), values),
+            ReLu(_) => eval_inplace(|v| v.max(zero::<N>()), values),
             LeakyReLu(a, _) => eval_inplace(|v| v.max(*a * v), values),
-            SoftPlus(_) => eval_inplace(|v| (one() + v.exp()).ln(), values),
+            SoftPlus(_) => eval_inplace(|v| (one::<N>() + v.exp()).ln(), values),
             SoftMax(_) => {
                 if values.len() > 0 {
                     let d = max_float(values).unwrap_or(zero());
-                    let h = values.iter().map(|v| (v - d).exp()).sum();
+                    let h = values.iter().map(|v| (*v - d).exp()).sum();
                     eval_inplace(|v| (v - d).exp() / h, values);
                 }
             }
@@ -83,7 +86,7 @@ impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
 
         match self {
             SoftMax(_) => {
-                let mut s = vec![0.; values.len()];
+                let mut s = vec![Default::default(); values.len()];
                 s.clone_from_slice(values);
                 self.diff_inplace(&mut s);
 
@@ -91,7 +94,7 @@ impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
                     let mut acc = 0.;
                     for j in 0..values.len() {
                         if i == j {
-                            acc += s[i] * (one() - s[i]);
+                            acc += s[i] * (one::<N>() - s[i]);
                         } else {
                             acc -= s[i] * s[j];
                         }
@@ -102,7 +105,7 @@ impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
             _ => {
                 self.diff_inplace(values);
                 for (v, m) in values.iter_mut().zip(multiplier) {
-                    *v *= m;
+                    *v *= *m;
                 }
             }
         }
@@ -115,22 +118,22 @@ impl<N: Float> ActivationFn<N> for FloatActivationFn<N> {
             Tanh(_) => eval_inplace(
                 |v| {
                     let x = v.tanh();
-                    one() - x * x
+                    one::<N>() - x * x
                 },
                 values,
             ),
             Logistic(_) => eval_inplace(
                 |v| {
-                    let x = one() / (one() + (-v).exp());
-                    x * (one() - x)
+                    let x = one::<N>() / (one::<N>() + (-v).exp());
+                    x * (one::<N>() - x)
                 },
                 values,
             ),
-            ReLu(_) => eval_inplace(|v| if v < zero() { zero() } else { one() }, values),
-            LeakyReLu(a, _) => eval_inplace(|v| if v < a * v { *a } else { one() }, values),
-            SoftPlus(_) => eval_inplace(|v| one() / (one() + (-v).exp()), values),
+            ReLu(_) => eval_inplace(|v| if v < zero::<N>() { zero::<N>() } else { one::<N>() }, values),
+            LeakyReLu(a, _) => eval_inplace(|v| if v < *a * v { *a } else { one::<N>() }, values),
+            SoftPlus(_) => eval_inplace(|v| one::<N>() / (one::<N>() + (-v).exp()), values),
             SoftMax(_) => unimplemented!("use the diff_inplace_mul function"),
-            Linear(_) => values.fill(one()),
+            Linear(_) => values.fill(one::<N>()),
         }
     }
 }
