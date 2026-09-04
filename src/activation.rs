@@ -11,7 +11,7 @@ pub trait ActivationFn<N> {
     fn diff_inplace(&self, values: &mut [N]);
 }
 
-fn eval_inplace<N, F: Fn(N) -> N>(f: F, a: &mut [N]) {
+fn eval_inplace<N: Copy, F: Fn(N) -> N>(f: F, a: &mut [N]) {
     for v in a {
         *v = f(*v);
     }

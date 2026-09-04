@@ -13,13 +13,14 @@ use dense_matrix::Symmetric;
 use dense_matrix::Matrix;
 use dense_matrix::RowVector;
 use dense_matrix::ColumnVector;
+use dense_matrix::MutableMatrix;
 use rand::Rng;
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Error as FmtError, Formatter};
 use std::iter::Sum;
-use std::ops::{AddAssign, Mul, MulAssign, Sub};
+use std::ops::{AddAssign, Mul, MulAssign, Sub, SubAssign};
 
-pub struct PCN<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> {
+pub struct PCN<N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + Copy, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> {
     activation_functions: Vec<A>,
     node_values: Vec<NodeValues<N>>,
     node_predictions: Vec<NodePredictions<N>>,
@@ -51,7 +52,7 @@ struct EdgeData<'a, NodeId: Debug> {
     matrix: usize,
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone + Debug> Debug for PCN<N, A, NodeId> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>, NodeId: Eq + Ord + Clone + Debug> Debug for PCN<N, A, NodeId> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         f.debug_map()
             .entries(self.nodes_map.iter().map(|(k, v)| {
@@ -82,7 +83,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
     }
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> Default for PCN<N, A, NodeId> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> Default for PCN<N, A, NodeId> {
     fn default() -> Self {
         Self {
             activation_functions: Vec::new(),
@@ -102,7 +103,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
     }
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> PCN<N, A, NodeId> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>, NodeId: Eq + Ord + Clone> PCN<N, A, NodeId> {
     pub fn add_node(&mut self, id: &NodeId, activation_function: A, size: usize) {
         debug_assert!(!self.nodes_map.contains_key(id));
 
@@ -209,16 +210,17 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
         // error_square_sum
     }
 
-    pub fn inference_steps(&mut self, gamma: f64, n: usize) -> f64 {
-        let mut err = 0.;
+    pub fn inference_steps(&mut self, gamma: N, n: usize) /*-> N*/ {
+        // let mut err = 0.;
 
         for _i in 0..n {
             self.compute_predictions();
-            err = self.compute_errors();
+            // err = self.compute_errors();
+            self.compute_errors();
             self.compute_values(gamma);
         }
 
-        err
+        // err
     }
 
     pub fn compute_predictions(&mut self) {
@@ -242,7 +244,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
 
         for (i, prediction) in self.node_predictions.iter_mut().enumerate() {
             if self.node_types[i].update_predictions() {
-                prediction.apply_activation_function(self.activation_functions[i]);
+                prediction.apply_activation_function(&self.activation_functions[i]);
                 // self.activation_functions[i].eval_inplace(prediction.0.as_mut());
 
                 // println!("::: predictions({}) {:?}", i, prediction.0.as_ref());
@@ -279,9 +281,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
         }
     }
 
-    pub fn compute_values(&mut self, gamma: f64) {
-        debug_assert!(gamma >= 0.);
-
+    pub fn compute_values(&mut self, gamma: N) {
         self.compute_gain_modulated_errors();
 
         for ((e, v), t) in self
@@ -297,9 +297,9 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
         }
 
         for edge in self.edges.iter() {
-            let w = &self.weight_matrices[edge.weight_matrix];
+            let w = &self.weight_matrices[edge.weight_matrix_index];
             let gme = &self.node_gain_modulated_errors[edge.target];
-            let v = &self.node_values[edge.source];
+            let v = &mut self.node_values[edge.source];
             let t = &self.node_types[edge.source];
 
             if t.update_values() {
@@ -315,29 +315,33 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
         */
     }
 
-    pub fn learn_hebb(&mut self, alpha: f64) {
-        debug_assert!(alpha >= 0.);
+    pub fn learn_hebb(&mut self, alpha: N) {
+        // debug_assert!(alpha >= 0.);
 
         self.compute_gain_modulated_errors();
 
         for edge in self.edges.iter() {
-            let w = &mut self.weight_matrices[edge.weight_matrix];
+            let w = &mut self.weight_matrices[edge.weight_matrix_index];
             let h = &self.node_gain_modulated_errors[edge.target].0.as_ref();
             let x = &self.node_values[edge.source].0.as_ref();
 
-            for r in w.rows_range() {
-                for c in w.cols_range() {
-                    w[(r, c)] += alpha * h[r] * x[c];
+            todo!("w += alpha * h^T * x")
+            /*
+            for r in w.matrix().rows_range() {
+                for c in w.matrix().cols_range() {
+                    *w.matrix_mut().get_mut(r, c) += alpha * h[r] * x[c];
+                    // w[(r, c)] += alpha * h[r] * x[c];
                 }
             }
+            */
         }
     }
 
-    pub fn learn_oja(&mut self, _alpha: f64) {
+    pub fn learn_oja(&mut self, _alpha: N) {
         todo!()
     }
 
-    pub fn set_values(&mut self, node_id: &NodeId, values: &[f64]) {
+    pub fn set_values(&mut self, node_id: &NodeId, values: &[N]) {
         let node_index = self.nodes_map.get(node_id).unwrap();
         self.node_values[*node_index]
             .0
@@ -345,6 +349,7 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
             .copy_from_slice(values);
     }
 
+    /*
     pub fn set_values_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
         let node_index = self.nodes_map.get(node_id).unwrap();
         let iter = self.node_values[*node_index].0.as_mut().iter_mut();
@@ -353,8 +358,9 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
             *v = if *i { 1. } else { -1. };
         }
     }
+    */
 
-    pub fn set_predictions(&mut self, node_id: &NodeId, values: &[f64]) {
+    pub fn set_predictions(&mut self, node_id: &NodeId, values: &[N]) {
         let node_index = self.nodes_map.get(node_id).unwrap();
         self.node_predictions[*node_index]
             .0
@@ -362,18 +368,21 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
             .copy_from_slice(values);
     }
 
-    pub fn fix_node(&mut self, node_id: &NodeId, values: &[f64]) {
+    pub fn fix_node(&mut self, node_id: &NodeId, values: &[N]) {
         self.set_node_type(node_id, NodeType::Label);
         self.set_values(node_id, values);
         self.set_predictions(node_id, values);
     }
 
+    /*
     pub fn fix_node_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
         self.set_node_type(node_id, NodeType::Label);
         self.set_values_from_bool(node_id, values);
         self.set_predictions_from_bool(node_id, values);
     }
+    */
 
+    /*
     pub fn set_predictions_from_bool(&mut self, node_id: &NodeId, values: &[bool]) {
         let node_index = self.nodes_map.get(node_id).unwrap();
         let iter = self.node_predictions[*node_index].0.as_mut().iter_mut();
@@ -382,13 +391,14 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug, 
             *v = if *i { 1. } else { -1. };
         }
     }
+    */
 
     pub fn set_node_type(&mut self, node_id: &NodeId, node_type: NodeType) {
         let node_index = self.nodes_map.get(node_id).unwrap();
         self.node_types[*node_index] = node_type;
     }
 
-    pub fn node_values(&self, node_id: &NodeId) -> &[f64] {
+    pub fn node_values(&self, node_id: &NodeId) -> &[N] {
         let node_index = self.nodes_map.get(node_id).unwrap();
         self.node_values[*node_index].0.as_ref()
     }
@@ -405,7 +415,7 @@ impl<N: Debug> Debug for NodeValues<N> {
     }
 }
 
-impl<N: Default + Clone> NodeValues<N> {
+impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign> NodeValues<N> {
     fn new(size: usize) -> Self {
         Self(vec![Default::default(); size].into_boxed_slice())
     }
@@ -417,18 +427,19 @@ impl<N: Default + Clone> NodeValues<N> {
         // scale_sub_inplace(gamma, local_errors.0.as_ref(), self.0.as_mut());
     }
 
-    fn update_with_gain_modulated_errors(&mut self, gamma: N, weights: WeightMatrix<N>, gain_modulated_errors: &GainModulatedErrors<N>) {
-        weights.matrix().trans_mul_vec_add_scale(gamma, gain_modulated_errors, self.0.as_mut()); 
+    fn update_with_gain_modulated_errors(&mut self, gamma: N, weights: &WeightMatrix<N>, gain_modulated_errors: &GainModulatedErrors<N>) {
+        // weights.matrix().trans_mul_vec_add_scale(gamma, gain_modulated_errors, self.0.as_mut()); 
+        todo!("weights.matrix().trans_mul_vec_add_scale(gamma, gain_modulated_errors, self.0.as_mut()); ");
     }
 
     fn as_column_vec(&self) -> ColumnVector<'_, N> {
-        ColumnVector::new(self.0)
+        ColumnVector::new(&self.0)
     }
 }
 
 struct NodePredictions<N>(Box<[N]>);
 
-impl<N: Default + Clone> NodePredictions<N> {
+impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign> NodePredictions<N> {
     fn new(size: usize) -> Self {
         Self(vec![Default::default(); size].into_boxed_slice())
     }
@@ -438,7 +449,7 @@ impl<N: Default + Clone> NodePredictions<N> {
     }
 
     fn add_weighted_input(&mut self, weights: &WeightMatrix<N>, source: &NodeValues<N>) {
-        weights.matrix().mul_vec_add(source.0, self.0.as_mut());
+        weights.matrix().mul_vec_add(&source.0, self.0.as_mut());
     }
 
     fn apply_activation_function<A: ActivationFn<N>>(&mut self, activation_function: &A) {
@@ -464,13 +475,13 @@ impl<N: Default + Clone> GainModulatedErrors<N> {
     }
 
     fn as_row_vec<'a>(&'a self) -> RowVector<'a, N> {
-        RowVector::new(self.0)
+        RowVector::new(&self.0)
     }
 }
 
-impl<N: AddAssign + Copy> GainModulatedErrors<N> {
+impl<N: AddAssign + MulAssign + Mul<Output = N> + Sum + Copy + Default + SubAssign> GainModulatedErrors<N> {
     fn add_weighted_input(&mut self, weights: WeightMatrix<N>, source: &NodeValues<N>) {
-        weights.matrix().mul_vec_add(source, self.0);
+        weights.matrix().mul_vec_add(source.0.as_ref(), self.0.as_mut());
     }
 
     fn compute<A: ActivationFn<N>>(&mut self, activation_function: &A, errors: &NodeErrors<N>) {
@@ -488,19 +499,19 @@ impl<N: Debug> Debug for NodeErrors<N> {
 
 impl<N: Default + Clone> NodeErrors<N> {
     fn new(size: usize) -> Self {
-        Self(vec![0.; size].into_boxed_slice())
+        Self(vec![Default::default(); size].into_boxed_slice())
     }
 }
 
 impl<N: Sub<Output = N> + Copy> NodeErrors<N> {
     fn compute(&mut self, node_type: NodeType, values: &NodeValues<N>, predictions: &NodePredictions<N>) {
         if node_type.is_label() {
-            for ((v, p), e) in values.iter().zip(predictions.iter()).zip(self.iter_mut()) {
-                *e = p - v;
+            for ((v, p), e) in values.0.iter().zip(predictions.0.iter()).zip(self.0.iter_mut()) {
+                *e = *p - *v;
             }
         } else {
-            for ((v, p), e) in values.iter().zip(predictions.iter()).zip(self.iter_mut()) {
-                *e = v - p;
+            for ((v, p), e) in values.0.iter().zip(predictions.0.iter()).zip(self.0.iter_mut()) {
+                *e = *v - *p;
             }
         }
     }
@@ -549,11 +560,18 @@ enum WeightMatrix<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + C
     HopfieldWeights(Box<Symmetric<N>>),
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy> WeightMatrix<N> {
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + SubAssign> WeightMatrix<N> {
     fn matrix(&self) -> &dyn Matrix<N> {
         match self {
-            WeightMatrix::LayerWeights(matrix) => matrix,
-            WeightMatrix::HopfieldWeights(matrix) => matrix,
+            WeightMatrix::LayerWeights(matrix) => matrix.as_ref(),
+            WeightMatrix::HopfieldWeights(matrix) => matrix.as_ref(),
+        }
+    }
+
+    fn matrix_mut(&self) -> &mut dyn MutableMatrix<N> {
+        match self {
+            WeightMatrix::LayerWeights(matrix) => matrix.as_mut(),
+            WeightMatrix::HopfieldWeights(matrix) => matrix.as_mut(),
         }
     }
 
