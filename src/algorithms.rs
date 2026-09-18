@@ -2,6 +2,8 @@ use crate::pcn::PCN;
 use rand::Rng;
 use std::collections::BTreeMap;
 
+// TODO randomize weights
+
 pub struct Data<Id: Eq + Ord + Clone> {
     sensor_patterns: Vec<(Id, Vec<f64>)>,
 }
@@ -11,10 +13,22 @@ pub struct LabeledData<Id: Eq + Ord + Clone> {
     label_patterns: Vec<(Id, Vec<f64>)>,
 }
 
+trait RandomizeAlgorithms<Id: Eq + Ord + Clone, N, A: ActivationFn<N>>: PCN<N, A, Id> {
+    fn weight_distribution(target_activation: &A, rng: &mut Rng) -> Distribution<N>;
+
+    // provided
+    fn randomize_weights(&mut self, rng: &mut Rng) {
+        todo!()
+    }
+
+    fn randomize_values(&mut self, rng: &mut Rng) {
+        todo!()
+    }
+}
+
 trait PCNAlgorithms<Id: Eq + Ord + Clone> {
     fn train_supervised<I: IntoIterator<Item = LabeledData<Id>>, R: Rng>(
         &mut self,
-        rng: &mut R,
         batch: I,
         alpha: f64,
         gamma: f64,
@@ -23,7 +37,6 @@ trait PCNAlgorithms<Id: Eq + Ord + Clone> {
     fn train_unsupervised<I: IntoIterator<Item = Data<Id>>>(&mut self, batch: I);
     fn evaluate<I: IntoIterator<Item = LabeledData<Id>>, R: Rng>(
         &mut self,
-        rng: &mut R,
         batch: I,
         gamma: f64,
         inference_steps: usize,

@@ -6,6 +6,8 @@ use num_traits::identities::{one, zero};
 use num_traits::One;
 use std::marker::PhantomData;
 use std::ops::MulAssign;
+use std::ops::AddAssign;
+use std::ops::SubAssign;
 use std::iter::Sum;
 
 pub trait ActivationFn<N> {
@@ -58,13 +60,13 @@ fn max_float<N: Float>(fs: &[N]) -> Option<N> {
     res
 }
 
-impl<N: Float + MulAssign + One + Clone + Sum + Default> ActivationFn<N> for FloatActivationFn<N> {
+impl<N: Float + MulAssign + One + Clone + Sum + Default + AddAssign + SubAssign> ActivationFn<N> for FloatActivationFn<N> {
     fn eval_inplace(&self, values: &mut [N]) {
         use FloatActivationFn::*;
 
         match self {
             Tanh(_) => eval_inplace(|v| v.tanh(), values),
-            Logistic(_) => eval_inplace(|v| one() / (one() + (-v).exp()), values),
+            Logistic(_) => eval_inplace(|v| one::<N>() / (one::<N>() + (-v).exp()), values),
             ReLu(_) => eval_inplace(|v| v.max(zero::<N>()), values),
             LeakyReLu(a, _) => eval_inplace(|v| v.max(*a * v), values),
             SoftPlus(_) => eval_inplace(|v| (one::<N>() + v.exp()).ln(), values),
@@ -91,7 +93,7 @@ impl<N: Float + MulAssign + One + Clone + Sum + Default> ActivationFn<N> for Flo
                 self.diff_inplace(&mut s);
 
                 for i in 0..values.len() {
-                    let mut acc = 0.;
+                    let mut acc = zero::<N>();
                     for j in 0..values.len() {
                         if i == j {
                             acc += s[i] * (one::<N>() - s[i]);
