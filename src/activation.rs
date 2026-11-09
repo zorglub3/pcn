@@ -1,14 +1,14 @@
 // use crate::dvector::eval_inplace;
 // use crate::dvector::max_f64;
-use serde::{Deserialize, Serialize};
 use num_traits::float::Float;
 use num_traits::identities::{one, zero};
 use num_traits::One;
-use std::marker::PhantomData;
-use std::ops::MulAssign;
-use std::ops::AddAssign;
-use std::ops::SubAssign;
+use serde::{Deserialize, Serialize};
 use std::iter::Sum;
+use std::marker::PhantomData;
+use std::ops::AddAssign;
+use std::ops::MulAssign;
+use std::ops::SubAssign;
 
 pub trait ActivationFn<N> {
     fn eval_inplace(&self, values: &mut [N]);
@@ -60,7 +60,9 @@ fn max_float<N: Float>(fs: &[N]) -> Option<N> {
     res
 }
 
-impl<N: Float + MulAssign + One + Clone + Sum + Default + AddAssign + SubAssign> ActivationFn<N> for FloatActivationFn<N> {
+impl<N: Float + MulAssign + One + Clone + Sum + Default + AddAssign + SubAssign> ActivationFn<N>
+    for FloatActivationFn<N>
+{
     fn eval_inplace(&self, values: &mut [N]) {
         use FloatActivationFn::*;
 
@@ -131,7 +133,16 @@ impl<N: Float + MulAssign + One + Clone + Sum + Default + AddAssign + SubAssign>
                 },
                 values,
             ),
-            ReLu(_) => eval_inplace(|v| if v < zero::<N>() { zero::<N>() } else { one::<N>() }, values),
+            ReLu(_) => eval_inplace(
+                |v| {
+                    if v < zero::<N>() {
+                        zero::<N>()
+                    } else {
+                        one::<N>()
+                    }
+                },
+                values,
+            ),
             LeakyReLu(a, _) => eval_inplace(|v| if v < *a * v { *a } else { one::<N>() }, values),
             SoftPlus(_) => eval_inplace(|v| one::<N>() / (one::<N>() + (-v).exp()), values),
             SoftMax(_) => unimplemented!("use the diff_inplace_mul function"),

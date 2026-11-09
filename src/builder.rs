@@ -1,7 +1,7 @@
 use crate::activation::ActivationFn;
 use crate::pcn::*;
-use std::marker::PhantomData;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
 use std::iter::Sum;
 use std::ops::{AddAssign, Mul, MulAssign, Sub, SubAssign};
@@ -36,7 +36,20 @@ impl<Id: Eq + Ord + Clone, N, A: ActivationFn<N>> Default for Builder<Id, N, A> 
 }
 
 #[allow(unused)]
-impl<Id: Eq + Ord + Clone, N: MulAssign + Mul<Output = N> + Sub<Output = N> + Default + AddAssign + Sum + Copy + SubAssign + Debug, A: ActivationFn<N> + Clone> Builder<Id, N, A> {
+impl<
+        Id: Eq + Ord + Clone,
+        N: MulAssign
+            + Mul<Output = N>
+            + Sub<Output = N>
+            + Default
+            + AddAssign
+            + Sum
+            + Copy
+            + SubAssign
+            + Debug,
+        A: ActivationFn<N> + Clone,
+    > Builder<Id, N, A>
+{
     pub fn with_generator(mut self, node_id_source: Box<dyn IdSource<Id>>) -> Self {
         self.node_id_source = Some(node_id_source);
         self

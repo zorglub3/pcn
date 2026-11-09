@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Error as FmtError, Formatter};
 use std::ops::{AddAssign, Index, IndexMut, Mul, Range};
 
+// TODO remove this file 
+
 /// A Dense matrix with data stored row-wise
 #[derive(Serialize, Deserialize, Clone)]
 pub struct DMatrix<T> {
