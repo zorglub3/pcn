@@ -168,8 +168,8 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
         panic!("node index {} not in PCN", node_index);
     }
 
-    pub fn compute_errors(&mut self) {
-        // TODO return accumulated error
+    pub fn compute_errors<F: Fn(&[N]) -> f64>(&mut self, error_func: &F) -> f64 {
+        let mut error_sum = 0.;
 
         let iter = self
             .node_errors
@@ -184,19 +184,24 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
                 error.0.as_mut().fill(Default::default());
             } else {
                 error.compute(*node_type, value, prediction);
+                error_sum += error_func(&error.0);
             }
         }
+
+        error_sum
     }
 
-    pub fn inference_steps<K: Into<N> + Clone>(&mut self, gamma: K, n: usize) /*-> N*/
+    pub fn inference_steps<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(&mut self, gamma: K, n: usize, error_func: &F) -> f64
     {
-        // TODO return accumulated error
+        let mut error_sum = 0.;
 
         for _i in 0..n {
             self.compute_predictions();
-            self.compute_errors();
+            error_sum = self.compute_errors(error_func);
             self.compute_values(gamma.clone());
         }
+
+        error_sum
     }
 
     pub fn compute_predictions(&mut self) {

@@ -49,8 +49,21 @@ fn make_batch(data: &[(Vec<NType>, Vec<NType>)]) -> Vec<LabeledData<IdType, NTyp
 fn error_func(target: &[NType], actual: &[NType]) -> f64 {
     let mut acc = 0.;
 
+    println!("computing error: {:?} vs {:?}", target, actual);
+
     for (a, b) in target.iter().zip(actual) {
-        acc += a * b;
+        let e = a - b;
+        acc += e * e;
+    }
+
+    acc
+}
+
+fn error_to_f64(e: &[f64]) -> f64 {
+    let mut acc = 0.;
+
+    for v in e.iter() {
+        acc += v * v;
     }
 
     acc
@@ -71,13 +84,13 @@ fn test_and_gate() {
     pcn.randomize_weights(&mut rng);
 
     for _i in 0..TRAINING_ROUNDS {
-        pcn.train_supervised(&batch, ALPHA, GAMMA, INFERENCE_STEPS);
+        let err = pcn.train_supervised(&batch, ALPHA, GAMMA, INFERENCE_STEPS, &error_to_f64);
+        println!("error at {} is {}", _i, err);
     }
 
-    let error = pcn.evaluate(&batch, GAMMA, INFERENCE_STEPS, error_func);
+    let error = pcn.evaluate(&batch, GAMMA, INFERENCE_STEPS, &error_func);
 
     println!("error: {}", error);
-    println!("pcn: {:#?}", pcn);
 
     assert!(error < 0.1);
 }

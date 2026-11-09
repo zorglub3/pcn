@@ -40,34 +40,37 @@ pub trait PCNAlgorithms<Id: Eq + Ord + Clone, N, A>
 where N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + Copy,
       A: ActivationFn<N>,
 {
-    fn train_supervised<K: Into<N> + Clone>(
+    fn train_supervised<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(
         &mut self,
         batch: &[LabeledData<Id, N>],
         alpha: K,
         gamma: K,
         inference_steps: usize,
-    );
-    fn train_unsupervised<K: Into<N> + Clone>(
+        error_func: &F,
+    ) -> f64;
+    fn train_unsupervised<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(
         &mut self, 
         batch: &[Data<Id, N>],
         alpha: K,
         gamma: K,
         inference_steps: usize,
-    );
+        error_func: &F,
+    ) -> f64;
     fn evaluate<K: Into<N> + Clone, F: Fn(&[N], &[N]) -> f64>(
         &mut self,
         batch: &[LabeledData<Id, N>],
         gamma: K,
         inference_steps: usize,
-        error_func: F,
+        error_func: &F,
     ) -> f64;
-    fn infer<K: Into<N> + Clone>(
+    fn infer<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(
         &mut self,
         gamma: K,
         inference_steps: usize,
         data: &Data<Id, N>,
         output: &mut BTreeMap<Id, Vec<N>>,
-    );
+        error_func: &F,
+    ) -> f64;
     fn new_output_map(&self, output_nodes: &[Id])
         -> BTreeMap<Id, Vec<N>>;
 }
@@ -110,41 +113,55 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
     }
 }
 
+fn ignore_error<N>(_x: &[N]) -> f64 {
+    0.
+}
+
 impl<N, A, Id> PCNAlgorithms<Id, N, A> for PCN<N, A, Id>
 where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>,
       A: ActivationFn<N>,
-      Id: Eq + Ord + Clone,
+      Id: Eq + Ord + Clone + Debug,
 {
-    fn train_supervised<K: Into<N> + Clone>(
+    fn train_supervised<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(
         &mut self,
         batch: &[LabeledData<Id, N>],
         alpha: K,
         gamma: K,
         inference_steps: usize,
-    ) {
+        error_func: &F,
+    ) -> f64 {
+        let mut error_acc = 0.;
+
         self.clear_node_labels();
 
         for labeled_data in batch.iter() {
             set_labeled_data(self, &labeled_data);
-            self.inference_steps(gamma.clone(), inference_steps);
+            error_acc += self.inference_steps(gamma.clone(), inference_steps, error_func);
             self.learn_hebb(alpha.clone());
         }
+
+        error_acc
     }
 
-    fn train_unsupervised<K: Into<N> + Clone>(
+    fn train_unsupervised<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(
         &mut self, 
         batch: &[Data<Id, N>],
         alpha: K,
         gamma: K,
         inference_steps: usize,
-    ) {
+        error_func: &F,
+    ) -> f64 {
+        let mut error_acc = 0.;
+
         self.clear_node_labels();
 
         for sensor_data in batch.into_iter() {
             set_sensor_data(self, &sensor_data);
-            self.inference_steps(gamma.clone(), inference_steps);
+            error_acc += self.inference_steps(gamma.clone(), inference_steps, error_func);
             self.learn_hebb(alpha.clone());
         }
+
+        error_acc
     }
 
     fn evaluate<K: Into<N> + Clone, F: Fn(&[N], &[N]) -> f64>(
@@ -152,7 +169,7 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
         batch: &[LabeledData<Id, N>],
         gamma: K,
         inference_steps: usize,
-        error_func: F,
+        error_func: &F,
     ) -> f64 {
         self.clear_node_labels();
 
@@ -160,34 +177,39 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
 
         for labeled_data in batch.into_iter() {
             set_sensors_from_labeled_data(self, labeled_data);
-            self.inference_steps(gamma.clone(), inference_steps);
+            self.inference_steps(gamma.clone(), inference_steps, &ignore_error);
 
             for (node_id, target_values) in labeled_data.label_patterns.iter() {
                 let actual_values = self.node_values(node_id);
 
                 error_value += error_func(target_values, actual_values);
             }
+
+            println!("pcn is {:#?}", self);
         }
 
         error_value
     }
 
-    fn infer<K: Into<N> + Clone>(
+    fn infer<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(
         &mut self,
         gamma: K,
         inference_steps: usize,
         data: &Data<Id, N>,
         output: &mut BTreeMap<Id, Vec<N>>,
-    ) {
+        error_func: &F,
+    ) -> f64 {
         self.clear_node_labels();
 
         set_sensor_data(self, &data);
-        self.inference_steps(gamma, inference_steps);
+        let error = self.inference_steps(gamma, inference_steps, error_func);
 
         for (k, v) in output.iter_mut() {
             v.clear();
             v.extend_from_slice(self.node_values(k));
         }
+
+        error
     }
 
     fn new_output_map(
