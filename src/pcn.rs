@@ -17,7 +17,7 @@ use std::ops::{AddAssign, Mul, MulAssign, Sub, SubAssign};
 use std::ops::DerefMut;
 
 pub struct PCN<
-    N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + Copy,
+    N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + Copy + Debug,
     A: ActivationFn<N>,
     NodeId: Eq + Ord + Clone,
 > {
@@ -88,7 +88,7 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
 }
 
 impl<N, A, NodeId> Default for PCN<N, A, NodeId>
-where N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign,
+where N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign + Debug,
       A: ActivationFn<N>,
       NodeId: Eq + Ord + Clone,
 {
@@ -292,21 +292,6 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
             .copy_from_slice(values);
     }
 
-    pub fn set_values_from_bool(
-        &mut self,
-        node_id: &NodeId,
-        true_val: N,
-        false_val: N,
-        values: &[bool],
-    ) {
-        let node_index = self.nodes_map.get(node_id).unwrap();
-        let iter = self.node_values[*node_index].0.as_mut().iter_mut();
-
-        for (i, v) in values.iter().zip(iter) {
-            *v = if *i { true_val } else { false_val };
-        }
-    }
-
     pub fn set_predictions(&mut self, node_id: &NodeId, values: &[N]) {
         let node_index = self.nodes_map.get(node_id).unwrap();
         self.node_predictions[*node_index]
@@ -319,33 +304,6 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
         self.set_node_type(node_id, NodeType::Label);
         self.set_values(node_id, values);
         self.set_predictions(node_id, values);
-    }
-
-    pub fn fix_node_from_bool(
-        &mut self,
-        node_id: &NodeId,
-        true_val: N,
-        false_val: N,
-        values: &[bool],
-    ) {
-        self.set_node_type(node_id, NodeType::Label);
-        self.set_values_from_bool(node_id, true_val, false_val, values);
-        self.set_predictions_from_bool(node_id, true_val, false_val, values);
-    }
-
-    pub fn set_predictions_from_bool(
-        &mut self,
-        node_id: &NodeId,
-        true_val: N,
-        false_val: N,
-        values: &[bool],
-    ) {
-        let node_index = self.nodes_map.get(node_id).unwrap();
-        let iter = self.node_predictions[*node_index].0.as_mut().iter_mut();
-
-        for (i, v) in values.iter().zip(iter) {
-            *v = if *i { true_val } else { false_val };
-        }
     }
 
     pub fn set_node_type(&mut self, node_id: &NodeId, node_type: NodeType) {
@@ -377,7 +335,7 @@ impl<N: Debug> Debug for NodeValues<N> {
     }
 }
 
-impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign>
+impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign + Debug>
     NodeValues<N>
 {
     fn new(size: usize) -> Self {
@@ -401,14 +359,14 @@ impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy +
             .vec_mul_add_scale(gamma, &gain_modulated_errors.0, self.0.as_mut());
     }
 
-    fn as_column_vec(&self) -> ColumnVector<'_, N> {
-        ColumnVector::new(&self.0)
+    fn as_row_vec(&self) -> RowVector<'_, N> {
+        RowVector::new(&self.0)
     }
 }
 
 struct NodePredictions<N>(Box<[N]>);
 
-impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign>
+impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign + Debug>
     NodePredictions<N>
 {
     fn new(size: usize) -> Self {
@@ -445,12 +403,12 @@ impl<N: Default + Clone> GainModulatedErrors<N> {
         self.0.as_mut().fill(Default::default());
     }
 
-    fn as_row_vec<'a>(&'a self) -> RowVector<'a, N> {
-        RowVector::new(&self.0)
+    fn as_column_vec<'a>(&'a self) -> ColumnVector<'a, N> {
+        ColumnVector::new(&self.0)
     }
 }
 
-impl<N: AddAssign + MulAssign + Mul<Output = N> + Sum + Copy + Default + SubAssign>
+impl<N: AddAssign + MulAssign + Mul<Output = N> + Sum + Copy + Default + SubAssign + Debug>
     GainModulatedErrors<N>
 {
     fn add_weighted_input(&mut self, weights: &WeightMatrix<N>, source: &NodeValues<N>) {
@@ -545,13 +503,13 @@ impl NodeType {
     }
 }
 
-pub(crate) enum WeightMatrix<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy> {
+pub(crate) enum WeightMatrix<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug> {
     LayerWeights(Box<RowWise<N>>),
     #[allow(unused)] // TODO allow for recurrent edges (from node to same node)
     HopfieldWeights(Box<Symmetric<N>>),
 }
 
-impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + SubAssign>
+impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + SubAssign + Debug>
     WeightMatrix<N>
 {
     fn matrix(&self) -> &dyn Matrix<N> {
@@ -567,9 +525,9 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + SubAssi
         values: &NodeValues<N>,
         gain_modulated_errors: &GainModulatedErrors<N>,
     ) {
-        let values = values.as_column_vec();
-        let gme = gain_modulated_errors.as_row_vec();
-        let delta = values * gme;
+        let values = values.as_row_vec();
+        let gme = gain_modulated_errors.as_column_vec();
+        let delta = gme * values;
 
         match self {
             WeightMatrix::LayerWeights(matrix) => add_scaled(matrix.as_mut(), alpha, &delta),
@@ -585,10 +543,21 @@ impl<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + SubAssi
     }
 }
 
-impl<N: Debug + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy> Debug
+impl<N: Debug + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug> Debug
     for WeightMatrix<N>
 {
-    fn fmt(&self, _fmt: &mut Formatter) -> Result<(), FmtError> {
-        todo!()
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), FmtError> {
+        match self {
+            WeightMatrix::LayerWeights(matrix) => {
+                fmt.debug_struct("LayerWeights")
+                    .field("matrix", &matrix)
+                    .finish()
+            }
+            WeightMatrix::HopfieldWeights(matrix) => {
+                fmt.debug_struct("HopfieldWeights")
+                    .field("matrix", &matrix)
+                    .finish()
+            }
+        }
     }
 }

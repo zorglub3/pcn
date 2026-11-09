@@ -6,6 +6,7 @@ use rand::Rng;
 use rand::RngExt;
 use std::iter::Sum;
 use std::ops::{AddAssign, Mul, MulAssign, SubAssign};
+use std::fmt::Debug;
 use num_traits::float::Float;
 
 pub trait PCNDistribution<N> {
@@ -63,7 +64,7 @@ pub trait RandomizePCN<N, A: ActivationFn<N>> {
 impl<Id, N, A> RandomizePCN<N, A> for PCN<N, A, Id>
 where 
     Id: Eq + Ord + Clone, 
-    N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + Copy,
+    N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + Copy + Debug,
     A: ActivationFn<N> + RandomizeDistribution<N> + Copy,
 {
     fn randomize_weights<R: Rng>(&mut self, rng: &mut R) {

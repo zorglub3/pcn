@@ -54,11 +54,12 @@ where N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + C
         gamma: K,
         inference_steps: usize,
     );
-    fn evaluate<K: Into<N> + Clone>(
+    fn evaluate<K: Into<N> + Clone, F: Fn(&[N], &[N]) -> f64>(
         &mut self,
         batch: &[LabeledData<Id, N>],
         gamma: K,
         inference_steps: usize,
+        error_func: F,
     ) -> f64;
     fn infer<K: Into<N> + Clone>(
         &mut self,
@@ -67,7 +68,7 @@ where N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + C
         data: &Data<Id, N>,
         output: &mut BTreeMap<Id, Vec<N>>,
     );
-    fn new_output_map<I: IntoIterator<Item = Id>>(&self, output_nodes: I)
+    fn new_output_map(&self, output_nodes: &[Id])
         -> BTreeMap<Id, Vec<N>>;
 }
 
@@ -77,6 +78,17 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
       Id: Eq + Ord + Clone,
 {
     for (node_id, values) in sensor_data.sensor_patterns.iter() {
+        pcn.set_node_type(node_id, NodeType::Sensor);
+        pcn.set_predictions(node_id, values);
+    }
+}
+
+fn set_sensors_from_labeled_data<N, A, Id>(pcn: &mut PCN<N, A, Id>, labeled_data: &LabeledData<Id, N>)
+where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>,
+      A: ActivationFn<N>,
+      Id: Eq + Ord + Clone,
+{
+     for (node_id, values) in labeled_data.sensor_patterns.iter() {
         pcn.set_node_type(node_id, NodeType::Sensor);
         pcn.set_predictions(node_id, values);
     }
@@ -135,20 +147,26 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
         }
     }
 
-    fn evaluate<K: Into<N> + Clone>(
+    fn evaluate<K: Into<N> + Clone, F: Fn(&[N], &[N]) -> f64>(
         &mut self,
         batch: &[LabeledData<Id, N>],
         gamma: K,
         inference_steps: usize,
+        error_func: F,
     ) -> f64 {
         self.clear_node_labels();
 
-        let error_value = 0.;
+        let mut error_value = 0.;
 
         for labeled_data in batch.into_iter() {
-            set_labeled_data(self, labeled_data);
+            set_sensors_from_labeled_data(self, labeled_data);
             self.inference_steps(gamma.clone(), inference_steps);
-            todo!("increment error");
+
+            for (node_id, target_values) in labeled_data.label_patterns.iter() {
+                let actual_values = self.node_values(node_id);
+
+                error_value += error_func(target_values, actual_values);
+            }
         }
 
         error_value
@@ -165,13 +183,23 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
 
         set_sensor_data(self, &data);
         self.inference_steps(gamma, inference_steps);
-        todo!("update output vectors");
+
+        for (k, v) in output.iter_mut() {
+            v.clear();
+            v.extend_from_slice(self.node_values(k));
+        }
     }
 
-    fn new_output_map<I: IntoIterator<Item = Id>>(
+    fn new_output_map(
         &self, 
-        output_nodes: I,
+        output_nodes: &[Id],
     ) -> BTreeMap<Id, Vec<N>> {
-        todo!("Create dummy vectors in output_nodes")
+        let mut result = BTreeMap::new();
+
+        for id in output_nodes {
+            result.insert(id.clone(), Vec::new()); 
+        }
+
+        result
     }
 }

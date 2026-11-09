@@ -3,14 +3,14 @@ use pcn::algorithms::*;
 use pcn::randomize::*;
 use rand::rng;
 
-type IdType = usize;
+type IdType = String;
 type NType = f64;
 type AType = FloatActivationFn<NType>;
 
-const GATE_INPUT_NODE: usize = 0;
-const GATE_OUTPUT_NODE: usize = 1;
-const GATE_HIDDEN_1: usize = 2;
-const GATE_HIDDEN_2: usize = 3;
+const GATE_INPUT_NODE: &str = "Input";
+const GATE_OUTPUT_NODE: &str = "Output";
+const GATE_HIDDEN_1: &str = "Hidden1";
+const GATE_HIDDEN_2: &str = "Hidden2";
 
 const ALPHA: NType = 0.2;
 const GAMMA: NType = 0.2;
@@ -18,9 +18,19 @@ const INFERENCE_STEPS: usize = 8;
 const TRAINING_ROUNDS: usize = 100;
 
 fn build_network() -> PCN<NType, AType, IdType> {
+    use FloatActivationFn::Tanh;
+
     let builder: Builder<IdType, NType, AType> = Default::default();
 
-    todo!()
+    builder
+        .add_node(GATE_INPUT_NODE.to_string(), Tanh(Default::default()), 2)
+        .add_node(GATE_HIDDEN_1.to_string(), Tanh(Default::default()), 2)
+        .add_node(GATE_HIDDEN_2.to_string(), Tanh(Default::default()), 2)
+        .add_node(GATE_OUTPUT_NODE.to_string(), Tanh(Default::default()), 1)
+        .add_edge(GATE_OUTPUT_NODE.to_string(), GATE_HIDDEN_2.to_string())
+        .add_edge(GATE_HIDDEN_2.to_string(), GATE_HIDDEN_1.to_string())
+        .add_edge(GATE_HIDDEN_1.to_string(), GATE_INPUT_NODE.to_string())
+        .build()
 }
 
 fn make_batch(data: &[(Vec<NType>, Vec<NType>)]) -> Vec<LabeledData<IdType, NType>> {
@@ -28,12 +38,22 @@ fn make_batch(data: &[(Vec<NType>, Vec<NType>)]) -> Vec<LabeledData<IdType, NTyp
 
     for datum in data {
         result.push(LabeledData {
-            sensor_patterns: vec![(GATE_INPUT_NODE, datum.0.clone())],
-            label_patterns: vec![(GATE_OUTPUT_NODE, datum.1.clone())],
+            sensor_patterns: vec![(GATE_INPUT_NODE.to_string(), datum.0.clone())],
+            label_patterns: vec![(GATE_OUTPUT_NODE.to_string(), datum.1.clone())],
         });
     }
 
     result
+}
+
+fn error_func(target: &[NType], actual: &[NType]) -> f64 {
+    let mut acc = 0.;
+
+    for (a, b) in target.iter().zip(actual) {
+        acc += a * b;
+    }
+
+    acc
 }
 
 #[test]
@@ -54,7 +74,10 @@ fn test_and_gate() {
         pcn.train_supervised(&batch, ALPHA, GAMMA, INFERENCE_STEPS);
     }
 
-    let error = pcn.evaluate(&batch, GAMMA, INFERENCE_STEPS);
+    let error = pcn.evaluate(&batch, GAMMA, INFERENCE_STEPS, error_func);
+
+    println!("error: {}", error);
+    println!("pcn: {:#?}", pcn);
 
     assert!(error < 0.1);
 }
