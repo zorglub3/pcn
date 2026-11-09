@@ -4,17 +4,17 @@
 
 use crate::activation::ActivationFn;
 use dense_matrix::add_scaled;
+use dense_matrix::generate;
 use dense_matrix::ColumnVector;
 use dense_matrix::Matrix;
-use dense_matrix::generate;
 use dense_matrix::RowVector;
 use dense_matrix::RowWise;
 use dense_matrix::Symmetric;
 use std::collections::BTreeMap;
 use std::fmt::{Debug, Error as FmtError, Formatter};
 use std::iter::Sum;
-use std::ops::{AddAssign, Mul, MulAssign, Sub, SubAssign};
 use std::ops::DerefMut;
+use std::ops::{AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 pub struct PCN<
     N: MulAssign + Mul<Output = N> + Default + AddAssign + SubAssign + Sum + Copy + Debug,
@@ -53,9 +53,18 @@ struct EdgeData<'a, NodeId: Debug> {
 }
 
 impl<N, A, NodeId> Debug for PCN<N, A, NodeId>
-where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign,
-      A: ActivationFn<N>,
-      NodeId: Eq + Ord + Clone + Debug,
+where
+    N: Sub<Output = N>
+        + MulAssign
+        + Mul<Output = N>
+        + Default
+        + AddAssign
+        + Sum
+        + Copy
+        + Debug
+        + SubAssign,
+    A: ActivationFn<N>,
+    NodeId: Eq + Ord + Clone + Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), FmtError> {
         f.debug_map()
@@ -88,9 +97,10 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
 }
 
 impl<N, A, NodeId> Default for PCN<N, A, NodeId>
-where N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign + Debug,
-      A: ActivationFn<N>,
-      NodeId: Eq + Ord + Clone,
+where
+    N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign + Debug,
+    A: ActivationFn<N>,
+    NodeId: Eq + Ord + Clone,
 {
     fn default() -> Self {
         Self {
@@ -112,9 +122,19 @@ where N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug 
 }
 
 impl<N, A, NodeId> PCN<N, A, NodeId>
-where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug + SubAssign, A: ActivationFn<N>,
-      A: ActivationFn<N>,
-      NodeId: Eq + Ord + Clone,
+where
+    N: Sub<Output = N>
+        + MulAssign
+        + Mul<Output = N>
+        + Default
+        + AddAssign
+        + Sum
+        + Copy
+        + Debug
+        + SubAssign,
+    A: ActivationFn<N>,
+    A: ActivationFn<N>,
+    NodeId: Eq + Ord + Clone,
 {
     pub fn add_node(&mut self, id: &NodeId, activation_function: A, size: usize) {
         debug_assert!(!self.nodes_map.contains_key(id));
@@ -191,8 +211,12 @@ where N: Sub<Output = N> + MulAssign + Mul<Output = N> + Default + AddAssign + S
         error_sum
     }
 
-    pub fn inference_steps<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(&mut self, gamma: K, n: usize, error_func: &F) -> f64
-    {
+    pub fn inference_steps<K: Into<N> + Clone, F: Fn(&[N]) -> f64>(
+        &mut self,
+        gamma: K,
+        n: usize,
+        error_func: &F,
+    ) -> f64 {
         let mut error_sum = 0.;
 
         for _i in 0..n {
@@ -340,8 +364,9 @@ impl<N: Debug> Debug for NodeValues<N> {
     }
 }
 
-impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign + Debug>
-    NodeValues<N>
+impl<
+        N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign + Debug,
+    > NodeValues<N>
 {
     fn new(size: usize) -> Self {
         Self(vec![Default::default(); size].into_boxed_slice())
@@ -371,8 +396,9 @@ impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy +
 
 struct NodePredictions<N>(Box<[N]>);
 
-impl<N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign + Debug>
-    NodePredictions<N>
+impl<
+        N: MulAssign + Mul<Output = N> + AddAssign + Sum + Default + Clone + Copy + SubAssign + Debug,
+    > NodePredictions<N>
 {
     fn new(size: usize) -> Self {
         Self(vec![Default::default(); size].into_boxed_slice())
@@ -508,7 +534,9 @@ impl NodeType {
     }
 }
 
-pub(crate) enum WeightMatrix<N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug> {
+pub(crate) enum WeightMatrix<
+    N: MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy + Debug,
+> {
     LayerWeights(Box<RowWise<N>>),
     #[allow(unused)] // TODO allow for recurrent edges (from node to same node)
     HopfieldWeights(Box<Symmetric<N>>),
@@ -553,16 +581,14 @@ impl<N: Debug + MulAssign + Mul<Output = N> + Default + AddAssign + Sum + Copy +
 {
     fn fmt(&self, fmt: &mut Formatter) -> Result<(), FmtError> {
         match self {
-            WeightMatrix::LayerWeights(matrix) => {
-                fmt.debug_struct("LayerWeights")
-                    .field("matrix", &matrix)
-                    .finish()
-            }
-            WeightMatrix::HopfieldWeights(matrix) => {
-                fmt.debug_struct("HopfieldWeights")
-                    .field("matrix", &matrix)
-                    .finish()
-            }
+            WeightMatrix::LayerWeights(matrix) => fmt
+                .debug_struct("LayerWeights")
+                .field("matrix", &matrix)
+                .finish(),
+            WeightMatrix::HopfieldWeights(matrix) => fmt
+                .debug_struct("HopfieldWeights")
+                .field("matrix", &matrix)
+                .finish(),
         }
     }
 }

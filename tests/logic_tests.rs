@@ -1,6 +1,6 @@
-use pcn::{Builder, FloatActivationFn, PCN};
 use pcn::algorithms::*;
 use pcn::randomize::*;
+use pcn::{Builder, FloatActivationFn, PCN};
 use rand::rng;
 
 type IdType = String;
@@ -12,10 +12,10 @@ const GATE_OUTPUT_NODE: &str = "Output";
 const GATE_HIDDEN_1: &str = "Hidden1";
 const GATE_HIDDEN_2: &str = "Hidden2";
 
-const ALPHA: NType = 0.2;
-const GAMMA: NType = 0.2;
-const INFERENCE_STEPS: usize = 8;
-const TRAINING_ROUNDS: usize = 100;
+const ALPHA: NType = 0.1;
+const GAMMA: NType = 0.1;
+const INFERENCE_STEPS: usize = 16;
+const TRAINING_ROUNDS: usize = 1000;
 
 fn build_network() -> PCN<NType, AType, IdType> {
     use FloatActivationFn::Tanh;

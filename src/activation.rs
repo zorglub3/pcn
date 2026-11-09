@@ -73,7 +73,7 @@ impl<N: Float + MulAssign + One + Clone + Sum + Default + AddAssign + SubAssign>
             LeakyReLu(a, _) => eval_inplace(|v| v.max(*a * v), values),
             SoftPlus(_) => eval_inplace(|v| (one::<N>() + v.exp()).ln(), values),
             SoftMax(_) => {
-                if values.len() > 0 {
+                if !values.is_empty() {
                     let d = max_float(values).unwrap_or(zero());
                     let h = values.iter().map(|v| (*v - d).exp()).sum();
                     eval_inplace(|v| (v - d).exp() / h, values);
